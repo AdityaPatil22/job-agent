@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import csv
-import sys
 from datetime import date
 from pathlib import Path
 
@@ -22,7 +20,6 @@ from .database import (
     update_application_status,
 )
 from .job_parser import parse_job_from_url
-from .models import ApplicationStatus
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -53,7 +50,7 @@ def add_job_command(url: str) -> None:
 
     click.secho(f"Saved job #{job_id}: {job.title} — {job.company}", fg="green")
     if job.title == "Untitled role" or job.company == "Unknown company":
-        click.echo("Some details could not be detected. You can still track the job; edit it later if needed.")
+        click.echo("Some details could not be detected. You can still track the job.")
 
 
 @cli.command("jobs")
@@ -153,21 +150,14 @@ def status_command(job_id: int) -> None:
 @click.option("--output", type=click.Path(path_type=Path), default=Path("data/applications.csv"))
 def export_command(output_format: str, output: Path) -> None:
     """Export the tracker as a CSV file."""
-    del output_format  # CSV is the supported format for the first MVP.
+    del output_format
     result = export_csv(output)
     click.secho(f"Exported tracker to {result.resolve()}", fg="green")
 
 
 def main() -> None:
     """Allow python -m job_agent.main."""
-    try:
-        cli()
-    except Exception as exc:
-        if isinstance(exc, click.ClickException):
-            exc.show()
-            raise SystemExit(exc.exit_code) from exc
-        click.echo(f"Error: {exc}", err=True)
-        raise SystemExit(1) from exc
+    cli()
 
 
 if __name__ == "__main__":
