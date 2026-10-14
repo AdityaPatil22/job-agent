@@ -1,2 +1,3 @@
-# Job-Agent package initialization
-# Exposes main CLI and core modules
+"""Job-Agent: a lightweight local job application assistant."""
+
+__version__ = "0.1.0"
