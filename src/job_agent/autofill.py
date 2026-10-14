@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any
 
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
@@ -15,7 +14,6 @@ from .models import CandidateProfile, FormGapReport
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RESUMES_DIR = PROJECT_ROOT / "resumes"
 
-# These keys are deliberately conservative: custom screening questions are not guessed.
 PROFILE_FIELD_VALUES = {
     "name": "name",
     "email": "email",
@@ -31,25 +29,26 @@ PROFILE_FIELD_VALUES = {
 
 
 def detect_resume_upload(page: Page):
-    """Return the first visible resume file input when one is available."""
+    """Return a resume-like file input, or the sole file input as a fallback."""
     inputs = page.locator('input[type="file"]')
-    for index in range(inputs.count()):
+    count = inputs.count()
+    for index in range(count):
         element = inputs.nth(index)
         try:
-            accept = (element.get_attribute("accept") or "").lower()
-            name = (element.get_attribute("name") or "").lower()
-            element_id = (element.get_attribute("id") or "").lower()
-            label = f"{accept} {name} {element_id}"
-            if any(token in label for token in ("resume", "cv", "file", "pdf", "doc")):
+            attrs = " ".join([
+                element.get_attribute("accept") or "",
+                element.get_attribute("name") or "",
+                element.get_attribute("id") or "",
+            ]).lower()
+            if any(token in attrs for token in ("resume", "cv", "file", "pdf", "doc")):
                 return element
         except Exception:
             continue
-    # ATSs often use an unlabeled file input, so use the only file input as fallback.
-    return inputs.nth(0) if inputs.count() == 1 else None
+    return inputs.nth(0) if count == 1 else None
 
 
 def upload_resume(page: Page, resume_path: str | Path) -> bool:
-    """Upload a resume if a suitable file input exists."""
+    """Upload a resume if the page exposes a file input."""
     path = Path(resume_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"Resume file not found: {path}")
@@ -58,7 +57,7 @@ def upload_resume(page: Page, resume_path: str | Path) -> bool:
         return False
     element.set_input_files(str(path))
     try:
-        page.wait_for_timeout(1_500)
+        page.wait_for_timeout(1500)
     except Exception:
         pass
     return True
@@ -76,17 +75,17 @@ def _field_label(locator) -> str:
             return label.strip()
         element_id = locator.get_attribute("id")
         if element_id:
-            label_text = locator.page.locator(f'label[for="{element_id}"]')
-            if label_text.count():
-                text = label_text.first.inner_text().strip()
-                if text:
-                    return text
-        name = locator.get_attribute("name")
-        if name:
-            return name.replace("_", " ").replace("-", " ").strip()
+            label_locator = locator.page.locator(f'label[for="{element_id}"]')
+            if label_locator.count():
+                label = label_locator.first.inner_text().strip()
+                if label:
+                    return label
         placeholder = locator.get_attribute("placeholder")
+        name = locator.get_attribute("name")
         if placeholder:
             return placeholder.strip()
+        if name:
+            return name.replace("_", " ").replace("-", " ").strip()
     except Exception:
         pass
     return ""
@@ -94,38 +93,32 @@ def _field_label(locator) -> str:
 
 def _find_value(label: str, profile: CandidateProfile, mappings: dict[str, list[str]]) -> tuple[str, str] | None:
     normalized = _normalize_label(label)
-    data = profile.model_dump()
-    aliases: dict[str, list[str]] = {}
-    for key, values in mappings.items():
-        aliases[key] = list(dict.fromkeys([key, *values]))
-
-    for key, profile_key in PROFILE_FIELD_VALUES.items():
-        candidates = aliases.get(key, [key])
+    profile_data = profile.model_dump()
+    for field_key, profile_key in PROFILE_FIELD_VALUES.items():
+        aliases = mappings.get(field_key, [])
+        candidates = list(dict.fromkeys([field_key, *aliases]))
         if any(alias and (normalized == alias or alias in normalized) for alias in candidates):
-            value = data.get(profile_key)
+            value = profile_data.get(profile_key)
             if isinstance(value, str) and value.strip():
                 return profile_key, value.strip()
-
-    # Education and experience are not sprayed across repeated fields automatically.
     return None
 
 
 def fill_field(page: Page, field_label: str, value: str) -> bool:
-    """Fill one field conservatively by accessible label, placeholder, or name."""
-    candidate_locators = [
+    """Fill a single matching text field using accessible locators."""
+    candidates = [
         page.get_by_label(field_label, exact=False),
         page.get_by_placeholder(field_label, exact=False),
-        page.locator(f'input[name="{field_label}"], textarea[name="{field_label}"]'),
     ]
-    for locator in candidate_locators:
+    for locator in candidates:
         try:
             for index in range(locator.count()):
                 element = locator.nth(index)
                 if not element.is_visible() or not element.is_enabled():
                     continue
-                tag_name = element.evaluate("(el) => el.tagName.toLowerCase()")
-                input_type = (element.get_attribute("type") or "").lower()
-                if tag_name == "textarea" or input_type in {"", "text", "email", "tel", "url", "search"}:
+                tag = element.evaluate("(el) => el.tagName.toLowerCase()")
+                kind = (element.get_attribute("type") or "").lower()
+                if tag == "textarea" or kind in {"", "text", "email", "tel", "url", "search"}:
                     element.fill(value)
                     return True
         except Exception:
@@ -138,30 +131,30 @@ def fill_standard_fields(
     profile: CandidateProfile,
     field_mappings: dict[str, list[str]] | None = None,
 ) -> FormGapReport:
-    """Fill visible, recognized text fields and report fields that need attention."""
+    """Fill only empty, visible, recognized text fields."""
     mappings = field_mappings if field_mappings is not None else load_field_mappings()
     report = FormGapReport()
     seen_labels: set[str] = set()
-
-    fields = page.locator("input:not([type]), input[type='text'], input[type='email'], "
-                          "input[type='tel'], input[type='url'], input[type='search'], textarea")
+    fields = page.locator(
+        "input:not([type]), input[type='text'], input[type='email'], input[type='tel'], "
+        "input[type='url'], input[type='search'], textarea"
+    )
     for index in range(fields.count()):
         element = fields.nth(index)
         try:
             if not element.is_visible() or not element.is_enabled():
                 continue
-            if element.get_attribute("readonly") is not None or element.get_attribute("disabled") is not None:
+            if element.get_attribute("readonly") is not None:
                 continue
             label = _field_label(element)
             if not label:
+                report.unknown.append(f"Unlabeled field #{index + 1}")
                 continue
             normalized = _normalize_label(label)
             if normalized in seen_labels:
                 continue
             seen_labels.add(normalized)
-
-            current_value = element.input_value()
-            if current_value.strip():
+            if element.input_value().strip():
                 report.skipped.append(f"{label} (already filled)")
                 continue
             match = _find_value(label, profile, mappings)
@@ -175,32 +168,30 @@ def fill_standard_fields(
             except Exception:
                 report.failed.append(label)
         except Exception:
-            # Dynamic ATS forms can detach elements while being inspected.
+            # ATS pages often update DOM nodes asynchronously.
             continue
-
     return report
 
 
 def detect_next_button(page: Page):
-    """Find a visible Next/Continue button without touching Submit."""
-    for pattern in (re.compile(r"^(next|continue|save and continue)$", re.I),):
-        candidates = [
-            page.get_by_role("button", name=pattern),
-            page.get_by_role("link", name=pattern),
-            page.locator('input[type="button"], input[type="submit"]'),
-        ]
-        for locator in candidates:
-            try:
-                for index in range(locator.count()):
-                    element = locator.nth(index)
-                    if not element.is_visible() or not element.is_enabled():
-                        continue
-                    text = (element.inner_text() if element.evaluate("(el) => el.tagName") != "INPUT"
-                            else element.get_attribute("value") or "").strip()
-                    if pattern.match(text):
-                        return element
-            except Exception:
-                continue
+    """Find a visible Next/Continue action; never select a Submit control."""
+    pattern = re.compile(r"^(next|continue|save and continue)$", re.I)
+    for locator in (
+        page.get_by_role("button", name=pattern),
+        page.get_by_role("link", name=pattern),
+        page.locator('input[type="button"]'),
+    ):
+        try:
+            for index in range(locator.count()):
+                element = locator.nth(index)
+                if not element.is_visible() or not element.is_enabled():
+                    continue
+                tag = element.evaluate("(el) => el.tagName.toLowerCase()")
+                label = (element.inner_text() if tag != "input" else element.get_attribute("value") or "").strip()
+                if pattern.match(label):
+                    return element
+        except Exception:
+            continue
     return None
 
 
@@ -213,11 +204,12 @@ def _submit_visible(page: Page) -> bool:
     except Exception:
         pass
     try:
-        buttons = page.locator('input[type="submit"]')
-        for index in range(buttons.count()):
-            element = buttons.nth(index)
+        for index in range(page.locator('input[type="submit"]').count()):
+            element = page.locator('input[type="submit"]').nth(index)
             label = (element.get_attribute("value") or "").lower()
-            if element.is_visible() and element.is_enabled() and "submit" in label:
+            if element.is_visible() and element.is_enabled() and any(
+                word in label for word in ("submit", "apply")
+            ):
                 return True
     except Exception:
         pass
@@ -234,12 +226,8 @@ def autofill_form(
     field_mappings: dict[str, list[str]] | None = None,
     max_pages: int = 8,
 ) -> FormGapReport:
-    """Upload the selected resume, fill known fields, and stop for human review.
-
-    It intentionally never clicks a Submit/Apply button. The user must inspect the
-    actual form and manually submit it.
-    """
-    del job_id  # Kept in the interface for future per-job logging.
+    """Upload a resume, fill known fields, then leave the final submission to the user."""
+    del job_id  # Reserved for future per-job activity logging.
     if profile is None:
         from .config import load_profile
         profile = load_profile()
@@ -247,22 +235,23 @@ def autofill_form(
     base_dir = Path(resumes_dir) if resumes_dir else RESUMES_DIR
     resume_path = base_dir / resume_name
     if not resume_path.suffix:
-        # Support "ai-engineer" resolving to ai-engineer.pdf or ai-engineer.docx.
-        matches = [base_dir / f"{resume_name}{suffix}" for suffix in (".pdf", ".docx", ".doc")]
-        resume_path = next((candidate for candidate in matches if candidate.is_file()), matches[0])
+        choices = [base_dir / f"{resume_name}{suffix}" for suffix in (".pdf", ".docx", ".doc")]
+        resume_path = next((candidate for candidate in choices if candidate.is_file()), choices[0])
 
     report = FormGapReport()
-    try:
+    if resume_path.is_file():
         report.resume_uploaded = upload_resume(page, resume_path)
-    except FileNotFoundError:
-        report.skipped.append(f"Resume upload skipped: file not found ({resume_path})")
+        if not report.resume_uploaded:
+            report.skipped.append("No recognizable resume upload field found")
+    else:
+        report.skipped.append(f"Resume file not found: {resume_path}")
 
-    for page_number in range(max_pages):
-        page_report = fill_standard_fields(page, profile, mappings)
-        report.filled.extend(page_report.filled)
-        report.skipped.extend(page_report.skipped)
-        report.failed.extend(page_report.failed)
-        report.unknown.extend(page_report.unknown)
+    for page_number in range(max(1, max_pages)):
+        one_page = fill_standard_fields(page, profile, mappings)
+        report.filled.extend(one_page.filled)
+        report.skipped.extend(one_page.skipped)
+        report.failed.extend(one_page.failed)
+        report.unknown.extend(one_page.unknown)
 
         if _submit_visible(page):
             break
@@ -280,7 +269,6 @@ def autofill_form(
         if page_number == max_pages - 1:
             report.skipped.append(f"Stopped after safety limit of {max_pages} form pages")
 
-    # De-duplicate report entries while preserving order.
     report.filled = list(dict.fromkeys(report.filled))
     report.skipped = list(dict.fromkeys(report.skipped))
     report.failed = list(dict.fromkeys(report.failed))
@@ -289,7 +277,7 @@ def autofill_form(
 
 
 def wait_for_submit_button(page: Page) -> None:
-    """Block on terminal input while the user reviews the form; do not submit."""
-    print("\nReview the form in the browser and fill any unanswered required questions.")
-    print("This tool will not click Submit or Apply for you.")
+    """Pause in the terminal so the user can review the form; never submit automatically."""
+    print("\nReview the form in the browser and answer any required questions.")
+    print("Job-Agent will not click Submit or Apply for you.")
     input("Press Enter here when you have finished reviewing (the page stays open)...")
