@@ -1,23 +1,29 @@
-# Python project configuration and dependencies
-#
-# Metadata:
-#    - name: job-agent
-#    - version: 0.1.0
-#    - description: Lightweight job application automation
-#    - author: Your Name
-#
-# Dependencies (MVP):
-#    - python >= 3.12
-#    - playwright >= 1.40
-#    - pydantic >= 2.0
-#    - requests
-#    - beautifulsoup4
-#
-# Dev dependencies:
-#    - pytest
-#    - pytest-asyncio (for Playwright async)
-#    - black (code formatter)
-#    - ruff (linter)
-#
-# Entry point:
-#    - job-agent = job_agent.main:cli
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-agent"
+version = "0.1.0"
+description = "A lightweight local job application tracker and assisted autofill CLI"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "beautifulsoup4>=4.12",
+  "click>=8.1",
+  "pydantic>=2.0",
+  "playwright>=1.40",
+  "requests>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.scripts]
+job-agent = "job_agent.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
