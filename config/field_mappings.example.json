@@ -1,0 +1,17 @@
+{
+  "email": ["email", "email_address", "work_email", "personal_email", "e_mail"],
+  "phone": ["phone", "phone_number", "mobile", "cell", "contact_number"],
+  "name": ["name", "full_name", "first_name", "candidate_name"],
+  "address": ["address", "street_address", "home_address"],
+  "city": ["city", "city_town"],
+  "state": ["state", "province", "region"],
+  "zip": ["zip", "postal_code", "zip_code"],
+  "linkedin": ["linkedin", "linkedin_url", "linkedin_profile"],
+  "company": ["company", "current_company", "employer", "organization"],
+  "title": ["title", "job_title", "current_title", "position"],
+  "start_date": ["start_date", "start_month", "hire_date"],
+  "end_date": ["end_date", "end_month"],
+  "school": ["school", "university", "college", "institution"],
+  "degree": ["degree", "degree_type"],
+  "field_of_study": ["field_of_study", "major", "concentration"]
+}

@@ -1,0 +1,26 @@
+{
+  "name": "Your Name",
+  "email": "your.email@example.com",
+  "phone": "+1-XXX-XXX-XXXX",
+  "linkedin_url": "https://linkedin.com/in/yourprofile",
+  "current_company": "Company Name",
+  "current_title": "Your Job Title",
+  "location": "City, State",
+  "education": [
+    {
+      "school": "University Name",
+      "degree": "BS",
+      "field": "Computer Science",
+      "year": 2020
+    }
+  ],
+  "experience": [
+    {
+      "title": "Software Engineer",
+      "company": "Acme Corp",
+      "duration_years": 3,
+      "description": "Relevant experience summary"
+    }
+  ],
+  "skills": ["Python", "Playwright", "SQLite", "API Design"]
+}
