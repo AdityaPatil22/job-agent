@@ -1,26 +1,71 @@
 {
-  "name": "Your Name",
+  "name": "Your Full Name",
+  "first_name": "Your First Name",
+  "middle_name": "",
+  "last_name": "Your Last Name",
+
   "email": "your.email@example.com",
-  "phone": "+1-XXX-XXX-XXXX",
+  "phone": "+91-XXXXXXXXXX",
+  "country_code": "+91",
+
   "linkedin_url": "https://linkedin.com/in/yourprofile",
-  "current_company": "Company Name",
+  "github_url": "https://github.com/yourusername",
+  "portfolio_url": "",
+
+  "current_company": "Your Current Company",
   "current_title": "Your Job Title",
-  "location": "City, State",
+  "years_experience": 2,
+  "employment_type": "Full-time",
+
+  "location": "Pune, Maharashtra, India",
+  "city": "Pune",
+  "state": "Maharashtra",
+  "postal_code": "",
+  "country": "India",
+
+  "work_authorization": "",
+  "requires_visa_sponsorship": null,
+  "expected_salary": "",
+  "salary_currency": "INR",
+  "notice_period": "",
+  "willing_to_relocate": null,
+
+  "resume_path": "data/resume.pdf",
+  "cover_letter_path": "",
+
   "education": [
     {
       "school": "University Name",
-      "degree": "BS",
+      "degree": "Bachelor of Technology",
       "field": "Computer Science",
-      "year": 2020
+      "start_year": 2020,
+      "year": 2024,
+      "gpa": ""
     }
   ],
+
   "experience": [
     {
       "title": "Software Engineer",
-      "company": "Acme Corp",
-      "duration_years": 3,
-      "description": "Relevant experience summary"
+      "company": "Company Name",
+      "start_date": "2024-06",
+      "end_date": "",
+      "duration_years": 2,
+      "description": "Summary of your responsibilities and impact",
+      "achievements": [
+        "Describe a measurable achievement"
+      ]
     }
   ],
-  "skills": ["Python", "Playwright", "SQLite", "API Design"]
+
+  "skills": [
+    "Python",
+    "JavaScript",
+    "Playwright",
+    "SQLite",
+    "API Design"
+  ],
+
+  "certifications": [],
+  "projects": []
 }

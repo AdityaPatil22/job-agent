@@ -1,0 +1,438 @@
+"""Local-only web dashboard for Job-Agent.
+
+The dashboard serves static HTML/CSS/JS and exposes a small, allow-listed API.
+All application actions use the existing CLI in a subprocess. The subprocess
+inherits the terminal's stdin so interactive prompts (for login/form review)
+can still be answered in the terminal.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shlex
+import sqlite3
+import subprocess
+import sys
+import threading
+import uuid
+from collections import deque
+from datetime import datetime, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit
+
+from .database import DEFAULT_DB_PATH, get_job, init_db, list_jobs
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+RESUMES_DIR = PROJECT_ROOT / "resumes"
+VALID_STATUSES = {
+    "discovered", "shortlisted", "ready", "applied",
+    "interview", "rejected", "withdrawn",
+}
+MAX_REQUEST_BYTES = 64 * 1024
+MAX_OUTPUT_CHARS = 80_000
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _tail_join(parts: deque[str]) -> str:
+    return "".join(parts)
+
+
+class TaskManager:
+    """Run allow-listed CLI actions one at a time and retain their output."""
+
+    def __init__(self) -> None:
+        self._lock = threading.RLock()
+        self._tasks: dict[str, dict[str, Any]] = {}
+        self._active_id: str | None = None
+
+    def start(self, label: str, args: list[str]) -> dict[str, str]:
+        with self._lock:
+            if self._active_id is not None:
+                active = self._tasks.get(self._active_id, {})
+                raise RuntimeError(
+                    f"Another command is already {active.get('status', 'running')}. "
+                    "Wait for it to finish before starting another."
+                )
+
+            task_id = uuid.uuid4().hex[:12]
+            command = [sys.executable, "-m", "job_agent.main", *args]
+            display_command = shlex.join(command)
+            task: dict[str, Any] = {
+                "id": task_id,
+                "label": label,
+                "command": display_command,
+                "status": "running",
+                "return_code": None,
+                "created_at": _now(),
+                "finished_at": None,
+                "output_parts": deque(),
+                "output_size": 0,
+            }
+            self._tasks[task_id] = task
+            self._active_id = task_id
+            self._prune_locked()
+
+        thread = threading.Thread(
+            target=self._run, args=(task_id, command), daemon=True,
+            name=f"job-agent-task-{task_id}",
+        )
+        thread.start()
+        return {"task_id": task_id, "status": "running", "label": label}
+
+    def _append_output(self, task_id: str, chunk: str) -> None:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return
+            parts: deque[str] = task["output_parts"]
+            parts.append(chunk)
+            task["output_size"] += len(chunk)
+            if task["output_size"] > MAX_OUTPUT_CHARS + 1024:
+                combined = _tail_join(parts)[-MAX_OUTPUT_CHARS:]
+                task["output_parts"] = deque(["[Earlier output trimmed]\n", combined])
+                task["output_size"] = len(task["output_parts"][0]) + len(combined)
+
+    def _run(self, task_id: str, command: list[str]) -> None:
+        task = self._tasks[task_id]
+        prefix = f"\n[Job-Agent dashboard task {task_id}]"
+        print(f"{prefix} {task['label']}", flush=True)
+        print(f"$ {shlex.join(command)}", flush=True)
+
+        env = os.environ.copy()
+        source_path = str(PROJECT_ROOT / "src")
+        existing_pythonpath = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = source_path + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+        try:
+            # stdin is deliberately inherited: commands may ask the user to
+            # finish login or press Enter after reviewing a form in Chromium.
+            process = subprocess.Popen(
+                command,
+                cwd=PROJECT_ROOT,
+                env=env,
+                stdin=None,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                shell=False,
+            )
+            assert process.stdout is not None
+            # Read character-by-character so prompts without a newline become
+            # visible in the dashboard while the child waits for terminal input.
+            while True:
+                char = process.stdout.read(1)
+                if char == "":
+                    break
+                self._append_output(task_id, char)
+                sys.stdout.write(char)
+                sys.stdout.flush()
+            return_code = process.wait()
+            final_status = "succeeded" if return_code == 0 else "failed"
+            self._append_output(task_id, f"\n[Command exited with code {return_code}]\n")
+        except Exception as exc:
+            return_code = -1
+            final_status = "failed"
+            message = f"\n[Could not run command: {exc}]\n"
+            self._append_output(task_id, message)
+            print(message, end="", flush=True)
+        finally:
+            with self._lock:
+                current = self._tasks.get(task_id)
+                if current is not None:
+                    current["return_code"] = return_code
+                    current["status"] = final_status
+                    current["finished_at"] = _now()
+                if self._active_id == task_id:
+                    self._active_id = None
+
+    def get(self, task_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            return self._serialize_task(task) if task else None
+
+    def list(self) -> list[dict[str, Any]]:
+        with self._lock:
+            ordered = sorted(self._tasks.values(), key=lambda item: item["created_at"], reverse=True)
+            return [self._serialize_task(task, include_output=False) for task in ordered[:20]]
+
+    def latest(self) -> dict[str, Any] | None:
+        with self._lock:
+            if not self._tasks:
+                return None
+            task = max(self._tasks.values(), key=lambda item: item["created_at"])
+            return self._serialize_task(task)
+
+    def _serialize_task(self, task: dict[str, Any], include_output: bool = True) -> dict[str, Any]:
+        result = {key: value for key, value in task.items() if key not in {"output_parts", "output_size"}}
+        if include_output:
+            result["output"] = _tail_join(task["output_parts"])
+        return result
+
+    def _prune_locked(self) -> None:
+        if len(self._tasks) <= 25:
+            return
+        removable = sorted(
+            (task for task in self._tasks.values() if task["id"] != self._active_id and task["status"] != "running"),
+            key=lambda item: item["created_at"],
+        )
+        while len(self._tasks) > 20 and removable:
+            self._tasks.pop(removable.pop(0)["id"], None)
+
+
+TASKS = TaskManager()
+
+
+def _get_resumes() -> list[str]:
+    if not RESUMES_DIR.is_dir():
+        return []
+    allowed_suffixes = {".pdf", ".doc", ".docx"}
+    return sorted(
+        path.name for path in RESUMES_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() in allowed_suffixes
+    )
+
+
+def _delete_job(job_id: int) -> bool:
+    """Delete one job, its application, and its activity history atomically."""
+    with sqlite3.connect(DEFAULT_DB_PATH) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        exists = connection.execute("SELECT 1 FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if exists is None:
+            return False
+        connection.execute("DELETE FROM activity_log WHERE entity_id = ?", (job_id,))
+        connection.execute("DELETE FROM applications WHERE job_id = ?", (job_id,))
+        connection.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
+        return True
+
+
+class DashboardHandler(BaseHTTPRequestHandler):
+    server_version = "JobAgentDashboard/0.1"
+
+    def log_message(self, format_string: str, *args: Any) -> None:
+        print(f"[dashboard] {self.address_string()} - {format_string % args}", flush=True)
+
+    def _local_request_allowed(self) -> bool:
+        """Reject non-loopback hosts and cross-origin browser actions."""
+        host_header = self.headers.get("Host", "")
+        parsed_host = urlsplit("//" + host_header)
+        if parsed_host.hostname not in LOCAL_HOSTS:
+            return False
+        if parsed_host.port not in (None, self.server.server_port):
+            return False
+
+        origin = self.headers.get("Origin")
+        if origin:
+            parsed_origin = urlsplit(origin)
+            try:
+                origin_port = parsed_origin.port or (443 if parsed_origin.scheme == "https" else 80)
+            except ValueError:
+                return False
+            if parsed_origin.hostname not in LOCAL_HOSTS or origin_port != self.server.server_port:
+                return False
+            if parsed_origin.scheme not in {"http", "https"}:
+                return False
+        return True
+
+    def _send_bytes(self, body: bytes, content_type: str, status: int = 200) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json(self, value: Any, status: int = 200) -> None:
+        body = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
+        self._send_bytes(body, "application/json; charset=utf-8", status)
+
+    def _read_json(self) -> dict[str, Any]:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError as exc:
+            raise ValueError("Invalid Content-Length") from exc
+        if length <= 0 or length > MAX_REQUEST_BYTES:
+            raise ValueError("Request body must be between 1 byte and 64 KB")
+        try:
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("Request body must be valid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("Request body must be a JSON object")
+        return payload
+
+    def do_GET(self) -> None:
+        if not self._local_request_allowed():
+            self._json({"error": "Local requests only."}, 403)
+            return
+        path = urlsplit(self.path).path
+        if path == "/api/jobs":
+            self._json({"jobs": list_jobs()})
+            return
+        if path == "/api/resumes":
+            self._json({"resumes": _get_resumes()})
+            return
+        if path == "/api/tasks":
+            self._json({"tasks": TASKS.list(), "latest": TASKS.latest()})
+            return
+        if path.startswith("/api/tasks/"):
+            task_id = path.removeprefix("/api/tasks/")
+            if not task_id or "/" in task_id:
+                self._json({"error": "Task not found."}, 404)
+                return
+            task = TASKS.get(task_id)
+            self._json(task if task else {"error": "Task not found."}, 200 if task else 404)
+            return
+
+        static_files = {
+            "/": ("index.html", "text/html; charset=utf-8"),
+            "/index.html": ("index.html", "text/html; charset=utf-8"),
+            "/styles.css": ("styles.css", "text/css; charset=utf-8"),
+            "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+        }
+        static_entry = static_files.get(path)
+        if static_entry:
+            filename, content_type = static_entry
+            file_path = STATIC_DIR / filename
+            try:
+                self._send_bytes(file_path.read_bytes(), content_type)
+            except OSError:
+                self._json({"error": f"Dashboard asset missing: {filename}"}, 500)
+            return
+        self._json({"error": "Not found."}, 404)
+
+    def do_DELETE(self) -> None:
+        if not self._local_request_allowed():
+            self._json({"error": "Local requests only."}, 403)
+            return
+        path = urlsplit(self.path).path
+        prefix = "/api/jobs/"
+        if not path.startswith(prefix):
+            self._json({"error": "Not found."}, 404)
+            return
+        raw_job_id = path.removeprefix(prefix)
+        if not raw_job_id.isdigit() or int(raw_job_id) < 1:
+            self._json({"error": "A valid job ID is required."}, 400)
+            return
+        try:
+            job_id = int(raw_job_id)
+            if not _delete_job(job_id):
+                self._json({"error": f"Job #{job_id} was not found."}, 404)
+                return
+            self._json({"deleted": True, "job_id": job_id})
+        except Exception as exc:
+            self._json({"error": f"Could not delete job #{job_id}: {exc}"}, 500)
+
+    def do_POST(self) -> None:
+        if not self._local_request_allowed():
+            self._json({"error": "Local requests only."}, 403)
+            return
+        path = urlsplit(self.path).path
+        try:
+            payload = self._read_json()
+            if path == "/api/actions/add-job":
+                url = payload.get("url")
+                if not isinstance(url, str) or not url.strip():
+                    raise ValueError("Enter a job URL.")
+                parsed = urlsplit(url.strip())
+                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                    raise ValueError("Use a complete http:// or https:// job URL.")
+                result = TASKS.start("Add job", ["add-job", url.strip()])
+                self._json(result, 202)
+                return
+
+            if path == "/api/actions/apply":
+                job_id = self._positive_int(payload.get("job_id"), "job_id")
+                job = get_job(job_id)
+                if job is None:
+                    raise ValueError(f"Job #{job_id} was not found.")
+                resume = payload.get("resume")
+                if not isinstance(resume, str) or Path(resume).name != resume or Path(resume).suffix.lower() not in {".pdf", ".doc", ".docx"}:
+                    raise ValueError("Select a resume file from the resumes/ directory.")
+                if resume not in _get_resumes():
+                    raise ValueError(f"Resume file {resume!r} was not found in resumes/.")
+                result = TASKS.start("Assist with application", ["apply", "--job-id", str(job_id), "--resume", resume])
+                self._json(result, 202)
+                return
+
+            if path == "/api/actions/mark-applied":
+                job_id = self._positive_int(payload.get("job_id"), "job_id")
+                if get_job(job_id) is None:
+                    raise ValueError(f"Job #{job_id} was not found.")
+                args = ["mark-applied", "--job-id", str(job_id)]
+                notes = payload.get("notes", "")
+                if notes is not None and not isinstance(notes, str):
+                    raise ValueError("Notes must be text.")
+                if notes and notes.strip():
+                    args.extend(["--notes", notes.strip()[:2000]])
+                result = TASKS.start("Mark application as applied", args)
+                self._json(result, 202)
+                return
+
+            if path == "/api/actions/export":
+                result = TASKS.start("Export applications to CSV", ["export", "--format", "csv", "--output", "data/applications.csv"])
+                self._json(result, 202)
+                return
+
+            self._json({"error": "Unknown action."}, 404)
+        except ValueError as exc:
+            self._json({"error": str(exc)}, 400)
+        except RuntimeError as exc:
+            self._json({"error": str(exc)}, 409)
+        except Exception as exc:
+            self._json({"error": f"Request failed: {exc}"}, 500)
+
+    @staticmethod
+    def _positive_int(value: Any, field: str) -> int:
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"{field} must be a positive integer.") from exc
+        if parsed < 1:
+            raise ValueError(f"{field} must be a positive integer.")
+        return parsed
+
+
+def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
+    """Start the dashboard on loopback only."""
+    if host not in LOCAL_HOSTS:
+        raise ValueError("For safety, the dashboard can only bind to localhost, 127.0.0.1, or ::1.")
+    init_db()
+    server = ThreadingHTTPServer((host, port), DashboardHandler)
+    print("\nJob-Agent dashboard is running.", flush=True)
+    print(f"Open http://127.0.0.1:{server.server_port} in your browser.", flush=True)
+    print("Keep this terminal open. CLI output and any interactive prompts will appear here.", flush=True)
+    print("Press Ctrl+C to stop the dashboard.\n", flush=True)
+    try:
+        server.serve_forever(poll_interval=0.3)
+    except KeyboardInterrupt:
+        print("\nStopping Job-Agent dashboard...", flush=True)
+    finally:
+        server.server_close()
+
+
+def main() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Run the local Job-Agent web dashboard")
+    parser.add_argument("--host", default="127.0.0.1", help="Loopback host only (default: 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=8765, help="Port to listen on (default: 8765)")
+    args = parser.parse_args()
+    serve(args.host, args.port)
+
+
+if __name__ == "__main__":
+    main()

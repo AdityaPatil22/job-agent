@@ -1,17 +1,251 @@
 {
-  "email": ["email", "email_address", "work_email", "personal_email", "e_mail"],
-  "phone": ["phone", "phone_number", "mobile", "cell", "contact_number"],
-  "name": ["name", "full_name", "first_name", "candidate_name"],
-  "address": ["address", "street_address", "home_address"],
-  "city": ["city", "city_town"],
-  "state": ["state", "province", "region"],
-  "zip": ["zip", "postal_code", "zip_code"],
-  "linkedin": ["linkedin", "linkedin_url", "linkedin_profile"],
-  "company": ["company", "current_company", "employer", "organization"],
-  "title": ["title", "job_title", "current_title", "position"],
-  "start_date": ["start_date", "start_month", "hire_date"],
-  "end_date": ["end_date", "end_month"],
-  "school": ["school", "university", "college", "institution"],
-  "degree": ["degree", "degree_type"],
-  "field_of_study": ["field_of_study", "major", "concentration"]
+  "full_name": [
+    "name",
+    "full name",
+    "full legal name",
+    "candidate name",
+    "applicant name",
+    "legal name",
+    "your name",
+    "display name"
+  ],
+  "first_name": [
+    "first name",
+    "firstname",
+    "given name",
+    "forename",
+    "preferred first name",
+    "legal first name"
+  ],
+  "middle_name": [
+    "middle name",
+    "middle initial",
+    "middle initial or name"
+  ],
+  "last_name": [
+    "last name",
+    "lastname",
+    "surname",
+    "family name",
+    "legal last name"
+  ],
+  "email": [
+    "email",
+    "email address",
+    "e-mail",
+    "e mail address",
+    "personal email",
+    "work email",
+    "contact email",
+    "primary email"
+  ],
+  "phone": [
+    "phone",
+    "phone number",
+    "mobile",
+    "mobile number",
+    "cell",
+    "cell phone",
+    "telephone",
+    "contact number",
+    "contact phone",
+    "primary phone",
+    "daytime phone"
+  ],
+  "country_code": [
+    "country code",
+    "phone country code",
+    "calling code",
+    "dialing code"
+  ],
+  "linkedin": [
+    "linkedin",
+    "linkedin url",
+    "linkedin profile",
+    "linkedin profile url",
+    "linkedin link"
+  ],
+  "github": [
+    "github",
+    "github url",
+    "github profile",
+    "github profile url"
+  ],
+  "portfolio": [
+    "portfolio",
+    "portfolio url",
+    "personal website",
+    "website",
+    "personal site",
+    "blog url"
+  ],
+  "address": [
+    "address",
+    "street address",
+    "address line 1",
+    "address line 2",
+    "home address",
+    "mailing address",
+    "residential address"
+  ],
+  "city": [
+    "city",
+    "town",
+    "city or town",
+    "city town",
+    "municipality"
+  ],
+  "state": [
+    "state",
+    "province",
+    "region",
+    "state or province",
+    "territory"
+  ],
+  "zip": [
+    "zip",
+    "zip code",
+    "postal code",
+    "postcode",
+    "post code",
+    "pin code"
+  ],
+  "country": [
+    "country",
+    "country of residence",
+    "country or region",
+    "current country"
+  ],
+  "current_company": [
+    "company",
+    "current company",
+    "current employer",
+    "employer",
+    "organization",
+    "organisation",
+    "present employer"
+  ],
+  "current_title": [
+    "title",
+    "job title",
+    "current title",
+    "current position",
+    "position",
+    "designation",
+    "role",
+    "occupation"
+  ],
+  "employment_type": [
+    "employment type",
+    "job type",
+    "work type",
+    "contract type"
+  ],
+  "years_experience": [
+    "years of experience",
+    "total experience",
+    "professional experience",
+    "years of work experience"
+  ],
+  "education_school": [
+    "school",
+    "university",
+    "college",
+    "institution",
+    "educational institution",
+    "school name",
+    "university name"
+  ],
+  "education_degree": [
+    "degree",
+    "degree type",
+    "qualification",
+    "education level",
+    "highest degree"
+  ],
+  "education_field": [
+    "field of study",
+    "major",
+    "concentration",
+    "specialization",
+    "area of study",
+    "subject"
+  ],
+  "education_start_year": [
+    "education start year",
+    "school start year",
+    "enrollment year",
+    "start year"
+  ],
+  "education_end_year": [
+    "graduation year",
+    "graduation date",
+    "end year",
+    "year graduated",
+    "completion year"
+  ],
+  "resume": [
+    "resume",
+    "résumé",
+    "cv",
+    "curriculum vitae",
+    "upload resume",
+    "upload your resume",
+    "attach resume",
+    "attach your resume",
+    "upload cv",
+    "attach cv",
+    "choose resume",
+    "select resume",
+    "browse resume",
+    "resume attachment",
+    "resume file",
+    "supporting document"
+  ],
+  "cover_letter": [
+    "cover letter",
+    "covering letter",
+    "upload cover letter",
+    "attach cover letter",
+    "cover letter attachment"
+  ],
+  "work_authorization": [
+    "work authorization",
+    "authorized to work",
+    "legally authorized to work",
+    "right to work"
+  ],
+  "visa_sponsorship": [
+    "visa sponsorship",
+    "require sponsorship",
+    "require visa sponsorship",
+    "sponsorship required"
+  ],
+  "salary": [
+    "salary",
+    "expected salary",
+    "desired salary",
+    "salary expectation",
+    "compensation expectation",
+    "expected compensation"
+  ],
+  "notice_period": [
+    "notice period",
+    "availability",
+    "available to start",
+    "start availability",
+    "joining date"
+  ],
+  "relocation": [
+    "relocation",
+    "willing to relocate",
+    "open to relocation"
+  ],
+  "referral_source": [
+    "how did you hear about us",
+    "how did you hear about this position",
+    "source",
+    "referral source",
+    "application source"
+  ]
 }

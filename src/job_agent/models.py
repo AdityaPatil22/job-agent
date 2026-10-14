@@ -19,6 +19,7 @@ class Education(BaseModel):
     degree: str = ""
     field: str = ""
     year: int | None = None
+    start_year: int | None = None
 
 
 class Experience(BaseModel):
@@ -31,21 +32,25 @@ class Experience(BaseModel):
 
 class CandidateProfile(BaseModel):
     """Candidate details loaded from config/profile.json."""
-    model_config = ConfigDict(extra="ignore")
-    name: str = ""
-    email: str = ""
-    phone: str = ""
-    linkedin_url: str = ""
-    current_company: str = ""
-    current_title: str = ""
-    location: str = ""
-    address: str = ""
-    city: str = ""
-    state: str = ""
-    zip: str = ""
-    education: list[Education] = Field(default_factory=list)
-    experience: list[Experience] = Field(default_factory=list)
-    skills: list[str] = Field(default_factory=list)
+    first_name: str = ""
+    middle_name: str = ""
+    last_name: str = ""
+
+    github_url: str = ""
+    portfolio_url: str = ""
+
+    country: str = ""
+    country_code: str = ""
+
+    employment_type: str = ""
+    years_experience: float | None = None
+
+    work_authorization: str = ""
+    visa_sponsorship: str = ""
+    expected_salary: str = ""
+    notice_period: str = ""
+    relocation: str = ""
+    referral_source: str = ""
 
 
 class Job(BaseModel):
