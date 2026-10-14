@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import csv
 import sqlite3
-from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from .models import ApplicationStatus, Job
 
@@ -21,10 +20,10 @@ VALID_STATUSES = {
 
 
 def _connect(db_path: str | Path | None = None) -> sqlite3.Connection:
-    path = Path(db_path).expanduser() if db_path is not None else DEFAULT_DB_PATH
-    if str(path) != ":memory:":
-        path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(str(path))
+    raw_path = str(db_path) if db_path is not None else str(DEFAULT_DB_PATH)
+    if raw_path != ":memory:":
+        Path(raw_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(raw_path)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
@@ -67,7 +66,7 @@ def init_db(db_path: str | Path | None = None) -> None:
         )
 
 
-def _job_from_row(row: sqlite3.Row | None) -> dict[str, Any] | None:
+def _row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return dict(row) if row is not None else None
 
 
@@ -97,14 +96,15 @@ def add_job(job_data: Job | dict[str, Any], db_path: str | Path | None = None) -
         )
         row = connection.execute("SELECT id FROM jobs WHERE url = ?", (job.url,)).fetchone()
         job_id = int(row["id"])
+        timestamp = datetime.now(timezone.utc).isoformat()
         connection.execute(
             """INSERT OR IGNORE INTO applications (job_id, status, updated_at)
                VALUES (?, 'discovered', ?)""",
-            (job_id, datetime.now(timezone.utc).isoformat()),
+            (job_id, timestamp),
         )
         connection.execute(
             "INSERT INTO activity_log (entity_id, event_type, timestamp, outcome) VALUES (?, ?, ?, ?)",
-            (job_id, "job_added", datetime.now(timezone.utc).isoformat(), job.title),
+            (job_id, "job_added", timestamp, job.title),
         )
         return job_id
 
@@ -112,17 +112,17 @@ def add_job(job_data: Job | dict[str, Any], db_path: str | Path | None = None) -
 def get_job(job_id: int, db_path: str | Path | None = None) -> dict[str, Any] | None:
     init_db(db_path)
     with _connect(db_path) as connection:
-        return _job_from_row(
-            connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        )
+        return _row_dict(connection.execute(
+            "SELECT * FROM jobs WHERE id = ?", (job_id,)
+        ).fetchone())
 
 
 def get_job_by_url(url: str, db_path: str | Path | None = None) -> dict[str, Any] | None:
     init_db(db_path)
     with _connect(db_path) as connection:
-        return _job_from_row(
-            connection.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone()
-        )
+        return _row_dict(connection.execute(
+            "SELECT * FROM jobs WHERE url = ?", (url,)
+        ).fetchone())
 
 
 def list_jobs(
@@ -148,11 +148,9 @@ def list_jobs(
 def get_application(job_id: int, db_path: str | Path | None = None) -> dict[str, Any] | None:
     init_db(db_path)
     with _connect(db_path) as connection:
-        return _job_from_row(
-            connection.execute(
-                "SELECT * FROM applications WHERE job_id = ?", (job_id,)
-            ).fetchone()
-        )
+        return _row_dict(connection.execute(
+            "SELECT * FROM applications WHERE job_id = ?", (job_id,)
+        ).fetchone())
 
 
 def update_application_status(
@@ -170,9 +168,17 @@ def update_application_status(
     init_db(db_path)
     timestamp = datetime.now(timezone.utc).isoformat()
     with _connect(db_path) as connection:
-        exists = connection.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone()
-        if exists is None:
+        if connection.execute("SELECT id FROM jobs WHERE id = ?", (job_id,)).fetchone() is None:
             raise ValueError(f"Job {job_id} does not exist")
+
+        existing = connection.execute(
+            "SELECT * FROM applications WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        old = dict(existing) if existing is not None else {}
+        final_resume = resume_used if resume_used is not None else old.get("resume_used", "")
+        final_applied = applied_date.isoformat() if applied_date else old.get("applied_date")
+        final_next = next_action.isoformat() if next_action else old.get("next_action")
+        final_notes = notes if notes is not None else old.get("notes", "")
         connection.execute(
             """
             INSERT INTO applications
@@ -180,21 +186,13 @@ def update_application_status(
             VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(job_id) DO UPDATE SET
                 status = excluded.status,
-                resume_used = CASE WHEN ? IS NOT NULL THEN ? ELSE applications.resume_used END,
-                applied_date = CASE WHEN ? IS NOT NULL THEN ? ELSE applications.applied_date END,
-                next_action = CASE WHEN ? IS NOT NULL THEN ? ELSE applications.next_action END,
-                notes = CASE WHEN ? IS NOT NULL THEN ? ELSE applications.notes END,
+                resume_used = excluded.resume_used,
+                applied_date = excluded.applied_date,
+                next_action = excluded.next_action,
+                notes = excluded.notes,
                 updated_at = excluded.updated_at
             """,
-            (
-                job_id, status, resume_used or "", applied_date.isoformat() if applied_date else None,
-                next_action.isoformat() if next_action else None, notes or "", timestamp,
-                resume_used, resume_used, applied_date.isoformat() if applied_date else None,
-                applied_date.isoformat() if applied_date else None,
-                next_action.isoformat() if next_action else None,
-                next_action.isoformat() if next_action else None,
-                notes, notes,
-            ),
+            (job_id, status, final_resume, final_applied, final_next, final_notes, timestamp),
         )
         connection.execute(
             "INSERT INTO activity_log (entity_id, event_type, timestamp, outcome) VALUES (?, ?, ?, ?)",
@@ -203,7 +201,8 @@ def update_application_status(
 
 
 def export_csv(
-    output_path: str | Path, db_path: str | Path | None = None
+    output_path: str | Path = "data/applications.csv",
+    db_path: str | Path | None = None,
 ) -> Path:
     """Export job and application tracker rows to CSV."""
     rows = list_jobs(db_path=db_path)
