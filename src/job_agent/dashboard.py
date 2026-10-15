@@ -439,6 +439,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             payload = self._read_json()
+            if path == "/api/actions/add-manual-job":
+                company = payload.get("company")
+                title = payload.get("title")
+                url = payload.get("url")
+                if not isinstance(company, str) or not company.strip():
+                    raise ValueError("Company name is required.")
+                if not isinstance(title, str) or not title.strip():
+                    raise ValueError("Role is required.")
+                if not isinstance(url, str) or not url.strip():
+                    raise ValueError("Job URL is required.")
+                parsed = urlsplit(url.strip())
+                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                    raise ValueError("Use a complete http:// or https:// job URL.")
+                from datetime import date
+                from .database import add_job
+                job_id = add_job({
+                    "company": company.strip(), "title": title.strip(), "url": url.strip(),
+                    "location": str(payload.get("location") or "").strip(),
+                    "description": "", "date_found": date.today().isoformat(),
+                })
+                fields = {key: payload[key] for key in ("status", "resume_used", "applied_date", "next_action", "notes") if key in payload}
+                updated = _update_job(job_id, fields)
+                self._json({"job": updated}, 201)
+                return
+
             if path == "/api/actions/add-job":
                 url = payload.get("url")
                 if not isinstance(url, str) or not url.strip():
