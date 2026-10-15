@@ -269,7 +269,9 @@ def _update_job(job_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
                 raise ValueError(f"{key} must use YYYY-MM-DD format.")
             else:
                 try:
-                    datetime.strptime(value, "%Y-%m-%d")
+                    parsed_date = datetime.strptime(value, "%Y-%m-%d")
+                    if parsed_date.strftime("%Y-%m-%d") != value:
+                        raise ValueError
                 except ValueError as exc:
                     raise ValueError(f"{key} must use YYYY-MM-DD format.") from exc
 
@@ -331,7 +333,7 @@ def _import_csv_text(csv_text: str, db_path: str | Path | None = None) -> dict[s
     csv_text = csv_text.lstrip("\ufeff")
     seen_urls: set[str] = set()
     try:
-        reader = csv.DictReader(io.StringIO(csv_text, newline=""))
+        reader = csv.DictReader(io.StringIO(csv_text, newline=""), strict=True)
         if not reader.fieldnames:
             raise ValueError("CSV must contain a header row.")
         normalized_headers = []
