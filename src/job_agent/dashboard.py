@@ -453,12 +453,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                     raise ValueError("Use a complete http:// or https:// job URL.")
                 from datetime import date
-                from .database import add_job
-                job_id = add_job({
-                    "company": company.strip(), "title": title.strip(), "url": url.strip(),
-                    "location": str(payload.get("location") or "").strip(),
-                    "description": "", "date_found": date.today().isoformat(),
-                })
+                from .database import add_job, get_job_by_url
+                clean_url = url.strip()
+                existing_job = get_job_by_url(clean_url)
+                if existing_job:
+                    job_id = int(existing_job["id"])
+                    # Preserve the existing tracker row and allow editing its details via this dialog.
+                    from .database import _connect
+                    with _connect() as connection:
+                        connection.execute(
+                            "UPDATE jobs SET company = ?, title = ?, location = ? WHERE id = ?",
+                            (company.strip(), title.strip(), str(payload.get("location") or "").strip(), job_id),
+                        )
+                else:
+                    job_id = add_job({
+                        "company": company.strip(), "title": title.strip(), "url": clean_url,
+                        "location": str(payload.get("location") or "").strip(),
+                        "description": "", "date_found": date.today().isoformat(),
+                    })
                 fields = {key: payload[key] for key in ("status", "resume_used", "applied_date", "next_action", "notes") if key in payload}
                 updated = _update_job(job_id, fields) if fields else next((item for item in list_jobs() if int(item["id"]) == job_id), None)
                 self._json({"job": updated}, 201)
