@@ -228,6 +228,9 @@ data/chromium_profile/
 config/profile.json
 config/preferences.json
 config/field_mappings.json
+config/gmail-credentials.json
+data/gmail/
+*.token.json
 resumes/*.pdf
 resumes/*.doc
 resumes/*.docx
