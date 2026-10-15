@@ -38,12 +38,14 @@ SYNC_LOCK = threading.Lock()
 STATUS_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("rejected", (
         r"\bwe regret to inform\b", r"\bnot moving forward\b",
-        r"\bwill not be moving forward\b", r"\bdecided not to move forward\b",
-        r"\bother candidates\b", r"\bnot be proceeding\b",
-        r"\bnot selected\b", r"\bunsuccessful in your application\b",
+        r"\bwon't be moving forward\b", r"\bwill not be moving forward\b",
+        r"\bdecided not to move forward\b", r"\bother candidates\b",
+        r"\bnot be proceeding\b", r"\bnot selected\b",
+        r"\bunsuccessful in your application\b",
     )),
     ("offer", (
-        r"\bpleased to offer\b", r"\bjob offer\b", r"\boffer letter\b",
+        r"\bpleased to offer\b", r"\b(?:excited|delighted|happy) to offer\b",
+        r"\boffer you (?:the|a)\b", r"\bjob offer\b", r"\boffer letter\b",
         r"\bemployment offer\b", r"\bformal offer\b",
     )),
     ("interview", (
@@ -614,7 +616,12 @@ def sync_gmail(
             ) from exc
 
         now = datetime.now(timezone.utc).isoformat()
-        profile = service.users().getProfile(userId="me").execute()
+        try:
+            profile = service.users().getProfile(userId="me").execute()
+        except HttpError as exc:
+            raise GmailIntegrationError(
+                f"Gmail profile lookup failed: {exc}. Check the API and reconnect if needed."
+            ) from exc
         address = str(profile.get("emailAddress") or "")
         with _connect(db_path) as connection:
             connection.execute(
