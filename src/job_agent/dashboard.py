@@ -269,8 +269,8 @@ def _update_job(job_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
         existing = dict(row) if row else {}
         status = app_fields.get("status", existing.get("status", "discovered"))
         resume = app_fields.get("resume_used", existing.get("resume_used", ""))
-        applied = app_fields.get("applied_date", existing.get("applied_date"))
-        followup = app_fields.get("next_action", existing.get("next_action"))
+        applied = app_fields["applied_date"] if "applied_date" in app_fields else existing.get("applied_date")
+        followup = app_fields["next_action"] if "next_action" in app_fields else existing.get("next_action")
         notes = app_fields.get("notes", existing.get("notes", ""))
         timestamp = _now()
         connection.execute(
