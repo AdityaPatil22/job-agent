@@ -28,10 +28,11 @@ GMAIL_CONFIG_PATH = PROJECT_ROOT / "config" / "gmail-credentials.json"
 GMAIL_TOKEN_PATH = PROJECT_ROOT / "data" / "gmail" / "token.json"
 GMAIL_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 GMAIL_QUERY = (
-    'newer_than:90d {application applied interview offer recruiter '
+    'newer_than:90d -in:sent -in:drafts {application applied interview offer recruiter '
     '"thank you for applying" "next steps" rejection}'
 )
 MAX_MESSAGES_PER_SYNC = 200
+MAX_DECODED_BODY_CHARS = 200_000
 AUTO_SYNC_INTERVAL_SECONDS = 15 * 60
 SYNC_LOCK = threading.Lock()
 
@@ -317,8 +318,11 @@ def _decode_header(value: str) -> str:
 
 def _decode_part(data: str) -> str:
     try:
-        raw = base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
-        return raw.decode("utf-8", errors="replace")
+        # Keep unexpectedly large messages from consuming excessive memory during sync.
+        bounded = data[:1_400_000]
+        bounded = bounded[:len(bounded) - (len(bounded) % 4)]
+        raw = base64.urlsafe_b64decode(bounded + "=" * (-len(bounded) % 4))
+        return raw[:MAX_DECODED_BODY_CHARS].decode("utf-8", errors="replace")
     except (ValueError, TypeError):
         return ""
 
@@ -387,6 +391,10 @@ def match_email_to_job(
     content = f"{subject}\n{body}"
     normalized_content = _text_normalized(content)
     content_tokens = _tokens(content)
+    company_counts: dict[str, int] = {}
+    for item in jobs:
+        normalized_company = _text_normalized(str(item.get("company") or ""))
+        company_counts[normalized_company] = company_counts.get(normalized_company, 0) + 1
     scored: list[tuple[float, dict[str, Any], str]] = []
     for job in jobs:
         company = str(job.get("company") or "")
@@ -413,10 +421,7 @@ def match_email_to_job(
             score, reason = 0.99, "The email references this job URL."
         elif (company_match or domain_match) and title_match:
             score, reason = 0.96, "The company and role both match the email."
-        elif company_match and len([
-            item for item in jobs
-            if _text_normalized(str(item.get("company") or "")) == company_norm
-        ]) == 1:
+        elif company_match and company_counts.get(company_norm, 0) == 1:
             score, reason = 0.76, "Company matches, but the email does not identify the role."
         elif domain_match and len([
             item for item in jobs
