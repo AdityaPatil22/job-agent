@@ -557,6 +557,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json({"error": "Local requests only."}, 403)
             return
         path = urlsplit(self.path).path
+        if path == "/api/email/status":
+            from .gmail_sync import get_status
+            self._json(get_status())
+            return
+        if path == "/api/email/review":
+            from .gmail_sync import list_review_events
+            self._json({"items": list_review_events(), "jobs": list_jobs()})
+            return
         if path == "/api/jobs":
             self._json({"jobs": list_jobs()})
             return
@@ -658,6 +666,49 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             payload = self._read_json(max_bytes=6 * 1024 * 1024 if path == "/api/import.csv" else MAX_REQUEST_BYTES)
+            if path == "/api/actions/email-connect":
+                result = TASKS.start("Connect Gmail", ["email-connect"])
+                self._json(result, 202)
+                return
+            if path == "/api/actions/email-sync":
+                result = TASKS.start("Sync Gmail", ["email-sync"])
+                self._json(result, 202)
+                return
+            if path == "/api/actions/email-disconnect":
+                from .gmail_sync import GmailIntegrationError, disconnect_gmail
+                try:
+                    disconnect_gmail()
+                except GmailIntegrationError as exc:
+                    raise ValueError(str(exc)) from exc
+                self._json({"disconnected": True})
+                return
+            if path == "/api/email/auto-sync":
+                from .gmail_sync import GmailIntegrationError, is_connected, set_auto_sync
+                enabled = payload.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("enabled must be true or false.")
+                if enabled and not is_connected():
+                    raise ValueError("Connect Gmail before enabling automatic sync.")
+                set_auto_sync(enabled)
+                self._json({"auto_sync": enabled})
+                return
+            if path == "/api/email/review":
+                from .gmail_sync import GmailIntegrationError, review_email_event
+                message_id = payload.get("message_id")
+                action = payload.get("action")
+                if not isinstance(message_id, str) or not message_id.strip():
+                    raise ValueError("message_id is required.")
+                if not isinstance(action, str):
+                    raise ValueError("action must be approve or dismiss.")
+                selected_job_id = payload.get("job_id")
+                if selected_job_id is not None:
+                    selected_job_id = self._positive_int(selected_job_id, "job_id")
+                try:
+                    result = review_email_event(message_id, action, selected_job_id)
+                except GmailIntegrationError as exc:
+                    raise ValueError(str(exc)) from exc
+                self._json({"result": result})
+                return
             if path == "/api/import.csv":
                 result = _import_csv_text(payload.get("csv_text"))
                 self._json({"import": result, "jobs": list_jobs()})
@@ -771,6 +822,14 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
         raise ValueError("For safety, the dashboard can only bind to localhost, 127.0.0.1, or ::1.")
     init_db()
     server = ThreadingHTTPServer((host, port), DashboardHandler)
+    scheduler_stop = threading.Event()
+    scheduler = threading.Thread(
+        target=lambda: __import__("job_agent.gmail_sync", fromlist=["run_auto_sync_scheduler"])
+        .run_auto_sync_scheduler(scheduler_stop),
+        daemon=True,
+        name="job-agent-gmail-auto-sync",
+    )
+    scheduler.start()
     print("\nJob-Agent dashboard is running.", flush=True)
     print(f"Open http://127.0.0.1:{server.server_port} in your browser.", flush=True)
     print("Keep this terminal open. CLI output and any interactive prompts will appear here.", flush=True)
@@ -780,6 +839,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
     except KeyboardInterrupt:
         print("\nStopping Job-Agent dashboard...", flush=True)
     finally:
+        scheduler_stop.set()
         server.server_close()
 
 
