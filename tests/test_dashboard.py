@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from job_agent import dashboard
+from job_agent.database import add_job, get_job_by_url, list_jobs
 
 
 def make_database(path: Path) -> None:
@@ -174,3 +175,33 @@ def test_csv_import_accepts_utf8_bom_and_role_alias(tmp_path: Path) -> None:
 
     assert result["inserted"] == 1
     assert dashboard.list_jobs(db_path=database_path)[0]["title"] == "AI Engineer"
+
+def test_database_add_deduplicates_tracking_url_variants(tmp_path: Path) -> None:
+    database_path = tmp_path / "jobs.db"
+    first_id = add_job(
+        {
+            "company": "Acme",
+            "title": "Backend Engineer",
+            "url": "https://Example.com/jobs/99/?utm_source=board#apply",
+            "location": "Pune",
+        },
+        db_path=database_path,
+    )
+    second_id = add_job(
+        {
+            "company": "Acme",
+            "title": "Senior Backend Engineer",
+            "url": "https://example.com/jobs/99",
+            "location": "Pune",
+        },
+        db_path=database_path,
+    )
+
+    assert second_id == first_id
+    assert len(list_jobs(db_path=database_path)) == 1
+    assert get_job_by_url(
+        "https://EXAMPLE.com/jobs/99/?utm_medium=another",
+        db_path=database_path,
+    )["id"] == first_id
+    assert list_jobs(db_path=database_path)[0]["title"] == "Senior Backend Engineer"
+
