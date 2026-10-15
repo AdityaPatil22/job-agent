@@ -18,6 +18,11 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.5"]
+gmail = [
+  "google-api-python-client>=2.150.0",
+  "google-auth-httplib2>=0.2.0",
+  "google-auth-oauthlib>=1.2.0",
+]
 
 [project.scripts]
 job-agent = "job_agent.main:cli"

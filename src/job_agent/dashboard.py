@@ -8,8 +8,11 @@ can still be answered in the terminal.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -24,17 +27,28 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from .database import DEFAULT_DB_PATH, get_job, init_db, list_jobs
+from .urls import normalize_job_url as _normalize_job_url
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 RESUMES_DIR = PROJECT_ROOT / "resumes"
 VALID_STATUSES = {
     "discovered", "shortlisted", "ready", "applied",
-    "interview", "rejected", "withdrawn",
+    "interview", "offer", "rejected", "withdrawn",
 }
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_OUTPUT_CHARS = 80_000
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def _safe_csv_value(value: Any) -> Any:
+    """Prevent spreadsheet formula execution when exported text is opened in a spreadsheet."""
+    if not isinstance(value, str):
+        return value
+    stripped = value.lstrip(" \t\r\n")
+    if value.startswith(("\t", "\r", "\n")) or stripped.startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
 
 
 def _now() -> str:
@@ -216,6 +230,270 @@ def _delete_job(job_id: int) -> bool:
         return True
 
 
+
+def _update_job(job_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Update job fields and application metadata without changing the storage model."""
+    job_fields = {key: payload[key] for key in ("company", "title", "url", "location", "description") if key in payload}
+    app_fields = {key: payload[key] for key in ("status", "resume_used", "applied_date", "next_action", "notes") if key in payload}
+    if not job_fields and not app_fields:
+        raise ValueError("Provide at least one field to update.")
+    for key, value in job_fields.items():
+        if not isinstance(value, str):
+            raise ValueError(f"{key} must be text.")
+        job_fields[key] = value.strip()
+    if ("company" in job_fields and not job_fields["company"]) or ("title" in job_fields and not job_fields["title"]):
+        raise ValueError("Company and role cannot be empty.")
+    if "url" in job_fields:
+        job_fields["url"] = _normalize_job_url(job_fields["url"])
+        for candidate in list_jobs():
+            if int(candidate["id"]) != job_id:
+                try:
+                    if _normalize_job_url(str(candidate["url"])) == job_fields["url"]:
+                        raise sqlite3.IntegrityError("That job URL is already tracked.")
+                except ValueError:
+                    continue
+    if "status" in app_fields:
+        status = app_fields["status"]
+        if not isinstance(status, str) or status.lower() not in VALID_STATUSES:
+            raise ValueError(f"Invalid status. Choose from: {', '.join(sorted(VALID_STATUSES))}.")
+        app_fields["status"] = status.lower()
+    for key in ("resume_used", "notes"):
+        if key in app_fields and not isinstance(app_fields[key], str):
+            raise ValueError(f"{key} must be text.")
+    for key in ("applied_date", "next_action"):
+        if key in app_fields:
+            value = app_fields[key]
+            if value in ("", None):
+                app_fields[key] = None
+            elif not isinstance(value, str):
+                raise ValueError(f"{key} must use YYYY-MM-DD format.")
+            else:
+                try:
+                    parsed_date = datetime.strptime(value, "%Y-%m-%d")
+                    if parsed_date.strftime("%Y-%m-%d") != value:
+                        raise ValueError
+                except ValueError as exc:
+                    raise ValueError(f"{key} must use YYYY-MM-DD format.") from exc
+
+    init_db()
+    with sqlite3.connect(DEFAULT_DB_PATH) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if current is None:
+            return None
+        if job_fields:
+            assignments = ", ".join(f"{key} = ?" for key in job_fields)
+            connection.execute(f"UPDATE jobs SET {assignments} WHERE id = ?", [*job_fields.values(), job_id])
+        row = connection.execute("SELECT * FROM applications WHERE job_id = ?", (job_id,)).fetchone()
+        existing = dict(row) if row else {}
+        status = app_fields.get("status", existing.get("status", "discovered"))
+        resume = app_fields.get("resume_used", existing.get("resume_used", ""))
+        applied = app_fields["applied_date"] if "applied_date" in app_fields else existing.get("applied_date")
+        followup = app_fields["next_action"] if "next_action" in app_fields else existing.get("next_action")
+        notes = app_fields.get("notes", existing.get("notes", ""))
+        timestamp = _now()
+        connection.execute(
+            """INSERT INTO applications (job_id,status,resume_used,applied_date,next_action,notes,updated_at)
+               VALUES (?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET
+               status=excluded.status,resume_used=excluded.resume_used,applied_date=excluded.applied_date,
+               next_action=excluded.next_action,notes=excluded.notes,updated_at=excluded.updated_at""",
+            (job_id, status, resume, applied, followup, notes, timestamp),
+        )
+        if "status" in app_fields and status != existing.get("status"):
+            connection.execute(
+                "INSERT INTO activity_log (entity_id,event_type,timestamp,outcome) VALUES (?,?,?,?)",
+                (job_id, "status_changed", timestamp, status),
+            )
+    return next((item for item in list_jobs() if int(item["id"]) == job_id), None)
+
+
+CSV_FIELDS = ["id", "company", "title", "url", "location", "date_found", "status", "resume_used", "applied_date", "next_action", "notes"]
+CSV_ALIASES = {"role": "title", "applied_on": "applied_date", "follow_up": "next_action", "follow_up_date": "next_action"}
+
+
+def _export_csv_text(db_path: str | Path | None = None) -> str:
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    for row in list_jobs(db_path=db_path):
+        # Apply to every exported cell so user-entered notes cannot run as a spreadsheet formula.
+        writer.writerow({key: _safe_csv_value(value) for key, value in row.items()})
+    return output.getvalue()
+
+
+def _import_csv_text(csv_text: str, db_path: str | Path | None = None) -> dict[str, Any]:
+    """Validate the whole CSV, snapshot an existing database, then merge without resetting blanks."""
+    if not isinstance(csv_text, str) or not csv_text.strip():
+        raise ValueError("Choose a non-empty CSV file.")
+    if len(csv_text.encode("utf-8")) > 5 * 1024 * 1024:
+        raise ValueError("CSV file is too large (maximum 5 MB).")
+    # Spreadsheet tools commonly export a UTF-8 BOM. Remove it before parsing the first header.
+    csv_text = csv_text.lstrip("\ufeff")
+    seen_urls: set[str] = set()
+    try:
+        reader = csv.DictReader(io.StringIO(csv_text, newline=""), strict=True)
+        if not reader.fieldnames:
+            raise ValueError("CSV must contain a header row.")
+        normalized_headers = []
+        for name in reader.fieldnames:
+            if name is None or not name.strip():
+                raise ValueError("CSV contains an empty column name.")
+            normalized = CSV_ALIASES.get(name.strip().lower(), name.strip().lower())
+            normalized_headers.append(normalized)
+        if len(normalized_headers) != len(set(normalized_headers)):
+            raise ValueError("CSV contains duplicate columns after normalizing aliases.")
+        headers = set(normalized_headers)
+        if not {"company", "url"}.issubset(headers) or "title" not in headers:
+            raise ValueError("CSV needs company, title (or role), and url columns. Use Export CSV for a template.")
+
+        rows: list[dict[str, Any]] = []
+        header_map = dict(zip(reader.fieldnames, normalized_headers))
+        for line_no, raw in enumerate(reader, start=2):
+            if None in raw and any(str(value or "").strip() for value in raw[None]):
+                raise ValueError(f"Row {line_no}: contains more values than the header.")
+            if not any(str(value or "").strip() for key, value in raw.items() if key is not None):
+                continue
+            row = {
+                header_map[key]: (value or "").strip()
+                for key, value in raw.items()
+                if key is not None
+            }
+            company, title, raw_url = row.get("company", ""), row.get("title", ""), row.get("url", "")
+            if not company or not title:
+                raise ValueError(f"Row {line_no}: company and role are required.")
+            try:
+                url = _normalize_job_url(raw_url)
+            except ValueError as exc:
+                raise ValueError(f"Row {line_no}: {exc}") from exc
+            if url in seen_urls:
+                raise ValueError(f"Row {line_no}: this job URL appears more than once in the CSV.")
+            seen_urls.add(url)
+
+            status = (row.get("status") or "").lower().replace(" ", "_")
+            status_aliases = {"pending": "discovered", "interviewed": "interview", "ready_to_review": "ready"}
+            status = status_aliases.get(status, status) if status else None
+            if status and status not in VALID_STATUSES:
+                raise ValueError(f"Row {line_no}: unsupported status '{status}'.")
+
+            parsed_dates: dict[str, str | None] = {}
+            for date_field in ("date_found", "applied_date", "next_action"):
+                value = row.get(date_field, "")
+                if not value:
+                    parsed_dates[date_field] = None
+                    continue
+                try:
+                    parsed = datetime.strptime(value, "%Y-%m-%d")
+                    if parsed.strftime("%Y-%m-%d") != value:
+                        raise ValueError
+                except ValueError as exc:
+                    raise ValueError(f"Row {line_no}: {date_field} must use YYYY-MM-DD.") from exc
+                parsed_dates[date_field] = value
+
+            rows.append({
+                "company": company,
+                "title": title,
+                "url": url,
+                "location": row.get("location") or None,
+                "description": row.get("description") or None,
+                "date_found": parsed_dates["date_found"],
+                "status": status,
+                "resume_used": row.get("resume_used") or None,
+                "applied_date": parsed_dates["applied_date"],
+                "next_action": parsed_dates["next_action"],
+                "notes": row.get("notes") or None,
+            })
+    except csv.Error as exc:
+        raise ValueError(f"Could not parse CSV: {exc}") from exc
+    if not rows:
+        raise ValueError("CSV contains no application rows.")
+
+    database_path = Path(db_path or DEFAULT_DB_PATH)
+    database_existed = database_path.exists()
+    init_db(database_path)
+
+    # SQLite's backup API includes committed WAL data. Microseconds prevent same-second
+    # imports from reusing a backup filename and replacing the previous recovery point.
+    backup_path = None
+    if database_existed:
+        backup_dir = database_path.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+        backup_path = backup_dir / f"jobs-before-csv-import-{backup_stamp}.db"
+        with sqlite3.connect(database_path) as source, sqlite3.connect(backup_path) as backup:
+            source.backup(backup)
+
+    existing_by_url: dict[str, dict[str, Any]] = {}
+    for existing_job in list_jobs(db_path=database_path):
+        try:
+            canonical = _normalize_job_url(str(existing_job["url"]))
+        except ValueError:
+            continue
+        existing_by_url.setdefault(canonical, existing_job)
+
+    inserted = updated = 0
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        for row in rows:
+            existing_job = existing_by_url.get(row["url"])
+            if existing_job:
+                job_id = int(existing_job["id"])
+                connection.execute(
+                    """UPDATE jobs SET company=?, title=?, location=?, description=?, date_found=?
+                       WHERE id=?""",
+                    (
+                        row["company"],
+                        row["title"],
+                        row["location"] if row["location"] is not None else existing_job.get("location", ""),
+                        row["description"] if row["description"] is not None else existing_job.get("description", ""),
+                        row["date_found"] or existing_job.get("date_found") or datetime.now().date().isoformat(),
+                        job_id,
+                    ),
+                )
+                old_app_row = connection.execute(
+                    "SELECT * FROM applications WHERE job_id=?", (job_id,)
+                ).fetchone()
+                old_app = dict(old_app_row) if old_app_row else {}
+                updated += 1
+            else:
+                cursor = connection.execute(
+                    """INSERT INTO jobs (company,title,url,location,description,date_found)
+                       VALUES (?,?,?,?,?,?)""",
+                    (
+                        row["company"], row["title"], row["url"], row["location"] or "",
+                        row["description"] or "", row["date_found"] or datetime.now().date().isoformat(),
+                    ),
+                )
+                job_id = int(cursor.lastrowid)
+                old_app = {}
+                inserted += 1
+
+            merged_status = row["status"] or old_app.get("status", "discovered")
+            merged_resume = row["resume_used"] if row["resume_used"] is not None else old_app.get("resume_used", "")
+            merged_applied_date = row["applied_date"] if row["applied_date"] is not None else old_app.get("applied_date")
+            merged_next_action = row["next_action"] if row["next_action"] is not None else old_app.get("next_action")
+            merged_notes = row["notes"] if row["notes"] is not None else old_app.get("notes", "")
+            connection.execute(
+                """INSERT INTO applications (job_id,status,resume_used,applied_date,next_action,notes,updated_at)
+                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET
+                   status=excluded.status, resume_used=excluded.resume_used, applied_date=excluded.applied_date,
+                   next_action=excluded.next_action, notes=excluded.notes, updated_at=excluded.updated_at""",
+                (job_id, merged_status, merged_resume, merged_applied_date, merged_next_action, merged_notes, _now()),
+            )
+            existing_by_url[row["url"]] = {
+                "id": job_id, "company": row["company"], "title": row["title"], "url": row["url"],
+                "location": row["location"] or "", "description": row["description"] or "",
+                "date_found": row["date_found"] or datetime.now().date().isoformat(),
+            }
+        connection.execute(
+            "INSERT INTO activity_log (entity_id,event_type,timestamp,outcome) VALUES (0,?,?,?)",
+            ("csv_import", _now(), f"inserted={inserted}, updated={updated}"),
+        )
+    return {"inserted": inserted, "updated": updated, "total": len(rows), "backup": str(backup_path) if backup_path else None}
+
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "JobAgentDashboard/0.1"
 
@@ -259,13 +537,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         body = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
         self._send_bytes(body, "application/json; charset=utf-8", status)
 
-    def _read_json(self) -> dict[str, Any]:
+    def _read_json(self, max_bytes: int = MAX_REQUEST_BYTES) -> dict[str, Any]:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("Invalid Content-Length") from exc
-        if length <= 0 or length > MAX_REQUEST_BYTES:
-            raise ValueError("Request body must be between 1 byte and 64 KB")
+        if length <= 0 or length > max_bytes:
+            raise ValueError(f"Request body must be between 1 byte and {max_bytes // (1024 * 1024) or 1} MB")
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -279,8 +557,28 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json({"error": "Local requests only."}, 403)
             return
         path = urlsplit(self.path).path
+        if path == "/api/email/status":
+            from .gmail_sync import get_status
+            self._json(get_status())
+            return
+        if path == "/api/email/review":
+            from .gmail_sync import list_review_events
+            self._json({"items": list_review_events(), "jobs": list_jobs()})
+            return
         if path == "/api/jobs":
             self._json({"jobs": list_jobs()})
+            return
+        if path == "/api/export.csv":
+            body = _export_csv_text().encode("utf-8-sig")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="job-applications.csv"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.end_headers()
+            self.wfile.write(body)
             return
         if path == "/api/resumes":
             self._json({"resumes": _get_resumes()})
@@ -299,6 +597,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         static_files = {
             "/": ("index.html", "text/html; charset=utf-8"),
+            "/gmail-setup.html": ("gmail-setup.html", "text/html; charset=utf-8"),
             "/index.html": ("index.html", "text/html; charset=utf-8"),
             "/styles.css": ("styles.css", "text/css; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -336,13 +635,127 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self._json({"error": f"Could not delete job #{job_id}: {exc}"}, 500)
 
+
+    def do_PATCH(self) -> None:
+        if not self._local_request_allowed():
+            self._json({"error": "Local requests only."}, 403)
+            return
+        path = urlsplit(self.path).path
+        prefix = "/api/jobs/"
+        raw_job_id = path.removeprefix(prefix) if path.startswith(prefix) else ""
+        if not raw_job_id.isdigit() or int(raw_job_id) < 1:
+            self._json({"error": "A valid job ID is required."}, 400)
+            return
+        try:
+            payload = self._read_json()
+            updated = _update_job(int(raw_job_id), payload)
+            if updated is None:
+                self._json({"error": f"Job #{raw_job_id} was not found."}, 404)
+                return
+            self._json({"job": updated})
+        except ValueError as exc:
+            self._json({"error": str(exc)}, 400)
+        except sqlite3.IntegrityError:
+            self._json({"error": "That job URL is already tracked."}, 409)
+        except Exception as exc:
+            self._json({"error": f"Could not update application: {exc}"}, 500)
+
     def do_POST(self) -> None:
         if not self._local_request_allowed():
             self._json({"error": "Local requests only."}, 403)
             return
         path = urlsplit(self.path).path
         try:
-            payload = self._read_json()
+            payload = self._read_json(max_bytes=6 * 1024 * 1024 if path == "/api/import.csv" else MAX_REQUEST_BYTES)
+            if path == "/api/actions/email-connect":
+                result = TASKS.start("Connect Gmail", ["email-connect"])
+                self._json(result, 202)
+                return
+            if path == "/api/actions/email-sync":
+                result = TASKS.start("Sync Gmail", ["email-sync"])
+                self._json(result, 202)
+                return
+            if path == "/api/actions/email-disconnect":
+                from .gmail_sync import GmailIntegrationError, disconnect_gmail
+                try:
+                    disconnect_gmail()
+                except GmailIntegrationError as exc:
+                    raise ValueError(str(exc)) from exc
+                self._json({"disconnected": True})
+                return
+            if path == "/api/email/auto-sync":
+                from .gmail_sync import GmailIntegrationError, get_status, is_connected, set_auto_sync
+                enabled = payload.get("enabled")
+                if not isinstance(enabled, bool):
+                    raise ValueError("enabled must be true or false.")
+                if enabled and not get_status()["available"]:
+                    raise ValueError('Install Gmail dependencies with: python -m pip install -e ".[gmail]"')
+                if enabled and not is_connected():
+                    raise ValueError("Connect Gmail before enabling automatic sync.")
+                set_auto_sync(enabled)
+                self._json({"auto_sync": enabled})
+                return
+            if path == "/api/email/review":
+                from .gmail_sync import GmailIntegrationError, review_email_event
+                message_id = payload.get("message_id")
+                action = payload.get("action")
+                if not isinstance(message_id, str) or not message_id.strip():
+                    raise ValueError("message_id is required.")
+                if not isinstance(action, str):
+                    raise ValueError("action must be approve or dismiss.")
+                selected_job_id = payload.get("job_id")
+                if selected_job_id is not None:
+                    selected_job_id = self._positive_int(selected_job_id, "job_id")
+                try:
+                    result = review_email_event(message_id, action, selected_job_id)
+                except GmailIntegrationError as exc:
+                    raise ValueError(str(exc)) from exc
+                self._json({"result": result})
+                return
+            if path == "/api/import.csv":
+                result = _import_csv_text(payload.get("csv_text"))
+                self._json({"import": result, "jobs": list_jobs()})
+                return
+            if path == "/api/actions/add-manual-job":
+                company = payload.get("company")
+                title = payload.get("title")
+                url = payload.get("url")
+                if not isinstance(company, str) or not company.strip():
+                    raise ValueError("Company name is required.")
+                if not isinstance(title, str) or not title.strip():
+                    raise ValueError("Role is required.")
+                if not isinstance(url, str) or not url.strip():
+                    raise ValueError("Job URL is required.")
+                parsed = urlsplit(url.strip())
+                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                    raise ValueError("Use a complete http:// or https:// job URL.")
+                from datetime import date
+                from .database import add_job
+                clean_url = _normalize_job_url(url.strip())
+                existing_job = next(
+                    (item for item in list_jobs() if _normalize_job_url(str(item["url"])) == clean_url),
+                    None,
+                )
+                if existing_job:
+                    job_id = int(existing_job["id"])
+                    # Preserve the current URL and update details through the same validated CRUD helper.
+                    changes = {
+                        "company": company.strip(), "title": title.strip(),
+                        "location": str(payload.get("location") or "").strip(),
+                    }
+                    changes.update({key: payload[key] for key in ("status", "resume_used", "applied_date", "next_action", "notes") if key in payload})
+                    updated = _update_job(job_id, changes)
+                else:
+                    job_id = add_job({
+                        "company": company.strip(), "title": title.strip(), "url": clean_url,
+                        "location": str(payload.get("location") or "").strip(),
+                        "description": "", "date_found": date.today().isoformat(),
+                    })
+                    fields = {key: payload[key] for key in ("status", "resume_used", "applied_date", "next_action", "notes") if key in payload}
+                    updated = _update_job(job_id, fields) if fields else next((item for item in list_jobs() if int(item["id"]) == job_id), None)
+                self._json({"job": updated}, 201)
+                return
+
             if path == "/api/actions/add-job":
                 url = payload.get("url")
                 if not isinstance(url, str) or not url.strip():
@@ -412,6 +825,15 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
         raise ValueError("For safety, the dashboard can only bind to localhost, 127.0.0.1, or ::1.")
     init_db()
     server = ThreadingHTTPServer((host, port), DashboardHandler)
+    scheduler_stop = threading.Event()
+    from .gmail_sync import run_auto_sync_scheduler
+    scheduler = threading.Thread(
+        target=run_auto_sync_scheduler,
+        args=(scheduler_stop,),
+        daemon=True,
+        name="job-agent-gmail-auto-sync",
+    )
+    scheduler.start()
     print("\nJob-Agent dashboard is running.", flush=True)
     print(f"Open http://127.0.0.1:{server.server_port} in your browser.", flush=True)
     print("Keep this terminal open. CLI output and any interactive prompts will appear here.", flush=True)
@@ -421,6 +843,7 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
     except KeyboardInterrupt:
         print("\nStopping Job-Agent dashboard...", flush=True)
     finally:
+        scheduler_stop.set()
         server.server_close()
 
 

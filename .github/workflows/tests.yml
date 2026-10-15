@@ -1,0 +1,41 @@
+name: Python tests
+
+on:
+  push:
+    branches: [master, feat/application-crud-dashboard]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Install Chromium for form tests
+        run: python -m playwright install --with-deps chromium
+
+      - name: Check dashboard JavaScript syntax
+        run: node --check src/job_agent/static/app.js
+
+      - name: Compile Python files
+        run: python -m compileall -q src tests
+
+      - name: Run tests
+        run: python -m pytest -q

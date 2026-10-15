@@ -1,24 +1,12 @@
 'use strict';
 
 const $ = (selector) => document.querySelector(selector);
-const state = {
-  jobs: [],
-  resumes: [],
-  taskId: null,
-  latestTaskId: null,
-  taskPoller: null,
-  hasRenderedTask: false,
-};
-
+const state = { jobs: [], resumes: [], taskId: null, taskPoller: null, lastSyncedAt: null, gmailConnected: false };
 const STATUS_LABELS = {
-  discovered: 'Discovered',
-  shortlisted: 'Shortlisted',
-  ready: 'Ready to review',
-  applied: 'Applied',
-  interview: 'Interview',
-  rejected: 'Rejected',
-  withdrawn: 'Withdrawn',
+  discovered: 'Discovered', shortlisted: 'Shortlisted', ready: 'Ready to review',
+  applied: 'Applied', interview: 'Interview', offer: 'Offer', rejected: 'Rejected', withdrawn: 'Withdrawn',
 };
+const STATUS_OPTIONS = Object.keys(STATUS_LABELS);
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -31,120 +19,124 @@ async function api(path, options = {}) {
   if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
   return payload;
 }
-
 function toast(message, kind = 'success') {
-  const region = $('#toast-region');
   const item = document.createElement('div');
   item.className = `toast${kind === 'error' ? ' error' : ''}`;
   item.textContent = message;
-  region.append(item);
-  window.setTimeout(() => item.remove(), 4200);
+  $('#toast-region').append(item);
+  window.setTimeout(() => item.remove(), 4000);
 }
-
-function safeText(value, fallback = '—') {
-  if (value === null || value === undefined || String(value).trim() === '') return fallback;
-  return String(value);
+function text(value, fallback = '—') {
+  return value === null || value === undefined || String(value).trim() === '' ? fallback : String(value);
 }
-
-function formatDate(value) {
+function localISODate() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
+function date(value) {
   if (!value) return '—';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return String(value);
-  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(date);
+  const parsed = new Date(`${value.slice(0, 10)}T12:00:00`);
+  return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(parsed);
 }
-
-function makeElement(tag, className, text) {
-  const element = document.createElement(tag);
-  if (className) element.className = className;
-  if (text !== undefined) element.textContent = text;
-  return element;
+function dateTime(value) {
+  if (!value) return 'Never';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(parsed);
 }
-
-function renderStats(jobs) {
-  const count = (status) => jobs.filter((job) => job.status === status).length;
+function element(tag, className, value) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (value !== undefined) node.textContent = value;
+  return node;
+}
+function statusBadge(status) {
+  return element('span', `status-badge status-${status || 'discovered'}`, STATUS_LABELS[status] || status || 'Discovered');
+}
+function renderStats() {
+  const jobs = state.jobs;
   $('#stat-total').textContent = jobs.length;
   $('#stat-progress').textContent = jobs.filter((job) => ['discovered', 'shortlisted', 'ready'].includes(job.status)).length;
-  $('#stat-applied').textContent = count('applied');
-  $('#stat-interviews').textContent = count('interview');
+  $('#stat-applied').textContent = jobs.filter((job) => job.status === 'applied').length;
+  $('#stat-interviews').textContent = jobs.filter((job) => job.status === 'interview').length;
+  const today = localISODate();
+  $('#stat-followups').textContent = jobs.filter((job) =>
+    job.next_action && job.next_action <= today &&
+    !['rejected', 'withdrawn'].includes(job.status)
+  ).length;
   $('#jobs-count').textContent = jobs.length;
+  $('#last-updated').innerHTML = '<span class="online-dot"></span> Synced with local database · ' + (state.lastSyncedAt ? new Intl.DateTimeFormat(undefined, {hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(state.lastSyncedAt) : 'syncing');
 }
-
-function statusBadge(status) {
-  const span = makeElement('span', `status-badge status-${status || 'discovered'}`, STATUS_LABELS[status] || status || 'Discovered');
-  return span;
-}
-
-function createJobRow(job) {
+function createRow(job) {
   const row = document.createElement('tr');
-  row.dataset.search = [job.title, job.company, job.location, job.url].filter(Boolean).join(' ').toLowerCase();
-  row.dataset.status = job.status || 'discovered';
+  const id = element('td', 'id-cell', `#${job.id}`);
+  row.append(id);
 
-  const roleCell = makeElement('td', 'role-cell');
-  roleCell.append(makeElement('span', 'role-title', safeText(job.title, 'Untitled role')));
-  roleCell.append(makeElement('span', 'company-name', safeText(job.company, 'Unknown company')));
-  const link = makeElement('a', 'url-link', 'Open job posting ↗');
-  link.href = job.url;
-  link.target = '_blank';
-  link.rel = 'noopener noreferrer';
-  roleCell.append(link);
-  row.append(roleCell);
-
-  row.append(makeElement('td', 'location-cell', safeText(job.location, 'Not detected')));
-  const statusCell = document.createElement('td');
-  statusCell.append(statusBadge(job.status));
-  row.append(statusCell);
-  row.append(makeElement('td', 'date-cell', formatDate(job.date_found)));
-
-  const actions = makeElement('td', 'actions-cell');
-  const actionGroup = makeElement('div', 'row-actions');
-  const assist = makeElement('button', 'action-link action-apply', 'Assist');
-  assist.type = 'button';
-  assist.dataset.action = 'apply';
-  assist.dataset.jobId = String(job.id);
-  assist.dataset.jobTitle = `${safeText(job.title, 'Untitled role')} — ${safeText(job.company, 'Unknown company')}`;
-  actionGroup.append(assist);
-
-  if (job.status !== 'applied') {
-    const mark = makeElement('button', 'action-link action-mark', 'Mark applied');
-    mark.type = 'button';
-    mark.dataset.action = 'mark-applied';
-    mark.dataset.jobId = String(job.id);
-    actionGroup.append(mark);
+  const companyCell = element('td', 'role-cell');
+  companyCell.append(element('span', 'company-name', text(job.company, 'Unknown company')));
+  companyCell.append(element('span', 'role-title', text(job.title, 'Untitled role')));
+  if (job.url) {
+    const link = element('a', 'url-link', 'Open posting ↗');
+    link.href = job.url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    companyCell.append(link);
   }
+  row.append(companyCell);
 
-  const remove = makeElement('button', 'action-link action-delete', 'Delete');
-  remove.type = 'button';
-  remove.dataset.action = 'delete';
-  remove.dataset.jobId = String(job.id);
-  remove.dataset.jobTitle = `${safeText(job.title, 'Untitled role')} — ${safeText(job.company, 'Unknown company')}`;
-  actionGroup.append(remove);
-  actions.append(actionGroup);
+  row.append(element('td', 'date-cell', date(job.applied_date)));
+  const statusCell = document.createElement('td');
+  const statusSelect = document.createElement('select');
+  statusSelect.className = 'inline-status';
+  statusSelect.setAttribute('aria-label', `Status for ${text(job.company)} — ${text(job.title)}`);
+  STATUS_OPTIONS.forEach((status) => statusSelect.add(new Option(STATUS_LABELS[status], status, false, status === job.status)));
+  statusSelect.dataset.action = 'status';
+  statusSelect.dataset.jobId = String(job.id);
+  statusCell.append(statusSelect, statusBadge(job.status));
+  row.append(statusCell);
+
+  const nextAction = element('td', 'date-cell', date(job.next_action));
+  if (job.next_action && job.next_action < localISODate() && !['rejected', 'withdrawn'].includes(job.status)) {
+    nextAction.append(element('span', 'overdue-label', 'Overdue'));
+  }
+  row.append(nextAction);
+  row.append(element('td', 'resume-cell', text(job.resume_used)));
+
+  const actions = element('td', 'actions-cell');
+  const group = element('div', 'row-actions');
+  const edit = element('button', 'action-link', 'Edit');
+  edit.type = 'button'; edit.dataset.action = 'edit'; edit.dataset.jobId = String(job.id);
+  group.append(edit);
+  const assist = element('button', 'action-link action-apply', 'Assist');
+  assist.type = 'button'; assist.dataset.action = 'apply'; assist.dataset.jobId = String(job.id);
+  assist.dataset.jobTitle = `${text(job.title, 'Untitled role')} — ${text(job.company, 'Unknown company')}`;
+  group.append(assist);
+  const remove = element('button', 'action-link action-delete', 'Delete');
+  remove.type = 'button'; remove.dataset.action = 'delete'; remove.dataset.jobId = String(job.id);
+  remove.dataset.jobTitle = `${text(job.company, 'Unknown company')} — ${text(job.title, 'Untitled role')}`;
+  group.append(remove);
+  actions.append(group);
   row.append(actions);
   return row;
 }
-
 function renderJobs() {
-  const loading = $('#jobs-loading');
-  const empty = $('#jobs-empty');
-  const noResults = $('#jobs-no-results');
-  const tableWrap = $('#jobs-table-wrap');
   const body = $('#jobs-table-body');
   body.replaceChildren();
-
-  const searchTerm = $('#search-input').value.trim().toLowerCase();
-  const selectedStatus = $('#status-filter').value;
+  const query = $('#search-input').value.trim().toLowerCase();
+  const status = $('#status-filter').value;
   const filtered = state.jobs.filter((job) => {
-    const searchable = [job.title, job.company, job.location, job.url].filter(Boolean).join(' ').toLowerCase();
-    return searchable.includes(searchTerm) && (selectedStatus === 'all' || job.status === selectedStatus);
+    const corpus = [job.id, job.company, job.title, job.location, job.url, job.notes, job.resume_used].filter(Boolean).join(' ').toLowerCase();
+    return corpus.includes(query) && (status === 'all' || job.status === status);
   });
-
-  loading.hidden = true;
-  empty.hidden = state.jobs.length !== 0;
-  noResults.hidden = state.jobs.length === 0 || filtered.length !== 0;
-  tableWrap.hidden = filtered.length === 0;
-  filtered.forEach((job) => body.append(createJobRow(job)));
+  $('#jobs-loading').hidden = true;
+  $('#jobs-empty').hidden = state.jobs.length > 0;
+  $('#jobs-no-results').hidden = !state.jobs.length || !!filtered.length;
+  $('#jobs-table-wrap').hidden = !filtered.length;
+  filtered.forEach((job) => body.append(createRow(job)));
 }
-
 async function loadJobs() {
   $('#jobs-loading').hidden = false;
   $('#jobs-empty').hidden = true;
@@ -153,14 +145,14 @@ async function loadJobs() {
   try {
     const payload = await api('/api/jobs');
     state.jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
-    renderStats(state.jobs);
+    state.lastSyncedAt = new Date();
+    renderStats();
     renderJobs();
   } catch (error) {
     $('#jobs-loading').hidden = true;
     toast(`Could not load applications: ${error.message}`, 'error');
   }
 }
-
 async function loadResumes() {
   try {
     const payload = await api('/api/resumes');
@@ -169,81 +161,216 @@ async function loadResumes() {
     state.resumes = [];
     toast(`Could not load resumes: ${error.message}`, 'error');
   }
-  renderResumeOptions();
-}
-
-function renderResumeOptions() {
   const select = $('#resume-select');
   select.replaceChildren();
-  if (!state.resumes.length) {
-    select.append(new Option('No resume files found', ''));
-    $('#resume-warning').hidden = false;
-    $('#start-apply-button').disabled = true;
+  $('#resume-warning').hidden = state.resumes.length > 0;
+  $('#start-apply-button').disabled = !state.resumes.length;
+  select.add(new Option(state.resumes.length ? 'Choose a resume…' : 'No resume files found', ''));
+  state.resumes.forEach((resume) => select.add(new Option(resume, resume)));
+}
+async function loadEmailStatus() {
+  try {
+    const status = await api('/api/email/status');
+    const badge = $('#gmail-status');
+    state.gmailConnected = Boolean(status.connected);
+    badge.textContent = !status.available ? 'Gmail extra needed' : (status.connected ? 'Connected' : 'Not connected');
+    badge.className = `gmail-status ${status.connected ? 'status-connected' : 'status-disconnected'}`;
+    $('#gmail-account').textContent = status.account || 'Not connected';
+    $('#gmail-last-sync').textContent = dateTime(status.last_sync_at);
+    $('#gmail-auto-sync').checked = Boolean(status.auto_sync);
+    $('#gmail-auto-sync').disabled = !status.connected || !status.available;
+    $('#gmail-connect-button').hidden = Boolean(status.connected);
+    $('#gmail-sync-button').disabled = !status.connected || !status.available;
+    $('#gmail-disconnect-button').hidden = !status.connected;
+    $('#gmail-setup-help').hidden = Boolean(status.connected) && Boolean(status.credentials_configured) && Boolean(status.available);
+    $('#gmail-review-count').textContent = String(status.pending_review || 0);
+  } catch (error) {
+    toast(`Could not load Gmail status: ${error.message}`, 'error');
+  }
+}
+function renderEmailReview(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  const list = $('#gmail-review-list');
+  list.replaceChildren();
+  $('#gmail-review-count').textContent = String(items.length);
+  $('#gmail-review-empty').hidden = items.length > 0;
+  items.forEach((item) => {
+    const card = element('article', 'email-review-card');
+    const header = element('div', 'email-review-card-header');
+    const heading = element('div', 'email-review-subject');
+    heading.append(element('strong', '', item.subject || '(No subject)'));
+    heading.append(element('span', 'email-review-meta', `${item.sender || 'Unknown sender'} · ${dateTime(item.received_at)}`));
+    header.append(heading);
+    if (item.detected_status) {
+      header.append(element('span', `status-badge status-${item.detected_status}`, STATUS_LABELS[item.detected_status] || item.detected_status));
+    }
+    card.append(header);
+    if (item.summary) card.append(element('p', 'email-review-summary', item.summary));
+    const confidence = Number(item.confidence || 0);
+    const confidenceText = Number.isFinite(confidence) ? `${Math.round(confidence * 100)}% match confidence · ` : '';
+    card.append(element('p', 'email-review-reason', confidenceText + (item.reason || 'This email needs confirmation.')));
+    const controls = element('div', 'email-review-controls');
+    const selectLabel = element('label', 'email-review-job-label', 'Match to job');
+    const select = document.createElement('select');
+    select.className = 'email-review-job-select';
+    select.setAttribute('aria-label', 'Job to update for this email');
+    select.add(new Option('Choose a tracked job…', ''));
+    jobs.forEach((job) => {
+      const label = `#${job.id} · ${text(job.company, 'Unknown company')} — ${text(job.title, 'Untitled role')}`;
+      select.add(new Option(label, String(job.id), false, Number(job.id) === Number(item.job_id)));
+    });
+    selectLabel.append(select);
+    controls.append(selectLabel);
+    const actions = element('div', 'email-review-actions');
+    if (item.thread_id) {
+      const link = element('a', 'action-link', 'Open email ↗');
+      link.href = `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(item.thread_id)}`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      actions.append(link);
+    }
+    const approve = element('button', 'button button-primary button-small', 'Approve update');
+    approve.type = 'button';
+    approve.disabled = !item.detected_status;
+    approve.addEventListener('click', () => reviewEmail(item, 'approve', select.value, approve, card));
+    actions.append(approve);
+    const dismiss = element('button', 'button button-secondary button-small', 'Dismiss');
+    dismiss.type = 'button';
+    dismiss.addEventListener('click', () => reviewEmail(item, 'dismiss', '', dismiss, card));
+    actions.append(dismiss);
+    controls.append(actions);
+    card.append(controls);
+    list.append(card);
+  });
+}
+async function loadEmailReview() {
+  try {
+    const payload = await api('/api/email/review');
+    renderEmailReview(payload);
+  } catch (error) {
+    toast(`Could not load email review queue: ${error.message}`, 'error');
+  }
+}
+async function reviewEmail(item, action, selectedJobId, button, card) {
+  if (action === 'approve' && !selectedJobId) {
+    toast('Choose the job this email belongs to.', 'error');
     return;
   }
-  $('#resume-warning').hidden = true;
-  $('#start-apply-button').disabled = false;
-  select.append(new Option('Choose a resume…', ''));
-  state.resumes.forEach((resume) => select.append(new Option(resume, resume)));
+  button.disabled = true;
+  try {
+    await api('/api/email/review', {
+      method: 'POST',
+      body: JSON.stringify({
+        message_id: item.message_id,
+        action,
+        ...(selectedJobId ? { job_id: Number(selectedJobId) } : {}),
+      }),
+    });
+    toast(action === 'approve' ? 'Application status updated from email.' : 'Email dismissed from review.');
+    card.remove();
+    await Promise.all([loadEmailStatus(), loadEmailReview(), loadJobs()]);
+  } catch (error) {
+    toast(error.message, 'error');
+    button.disabled = false;
+  }
 }
-
-function openApplyDialog(jobId, jobTitle) {
-  $('#apply-job-id').value = jobId;
-  $('#apply-job-caption').textContent = `Job #${jobId}: ${jobTitle}. A browser window will open for you to review the application.`;
-  if (typeof $('#apply-dialog').showModal === 'function') $('#apply-dialog').showModal();
-  else toast('Your browser does not support the application dialog. Please update it.', 'error');
+function openEditDialog(job = null) {
+  $('#edit-heading').textContent = job ? 'Edit application' : 'Add application manually';
+  $('#edit-eyebrow').textContent = job ? `APPLICATION #${job.id}` : 'NEW APPLICATION';
+  $('#edit-job-id').value = job ? job.id : '';
+  $('#edit-company').value = job?.company || '';
+  $('#edit-title').value = job?.title || '';
+  $('#edit-url').value = job?.url || '';
+  $('#edit-location').value = job?.location || '';
+  $('#edit-status').value = job?.status || 'discovered';
+  $('#edit-applied-date').value = job?.applied_date || '';
+  $('#edit-next-action').value = job?.next_action || '';
+  $('#edit-resume').value = job?.resume_used || '';
+  $('#edit-notes').value = job?.notes || '';
+  $('#edit-url').required = true;
+  $('#edit-dialog').showModal();
 }
-
+function closeEditDialog() { $('#edit-dialog').close(); }
+async function saveEdit(event) {
+  event.preventDefault();
+  const id = $('#edit-job-id').value;
+  const payload = {
+    company: $('#edit-company').value.trim(),
+    title: $('#edit-title').value.trim(),
+    url: $('#edit-url').value.trim(),
+    location: $('#edit-location').value.trim(),
+    status: $('#edit-status').value,
+    applied_date: $('#edit-applied-date').value,
+    next_action: $('#edit-next-action').value,
+    resume_used: $('#edit-resume').value.trim(),
+    notes: $('#edit-notes').value.trim(),
+  };
+  if (!payload.company || !payload.title || !payload.url) {
+    toast('Company, role and URL are required.', 'error');
+    return;
+  }
+  const button = $('#save-edit');
+  button.disabled = true;
+  try {
+    if (id) {
+      await api(`/api/jobs/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      toast('Application updated.');
+    } else {
+      // Manual entries still go through the standard add-job parsing/deduplication path.
+      const response = await api('/api/actions/add-manual-job', { method: 'POST', body: JSON.stringify(payload) });
+      if (response.job) toast('Application added.');
+    }
+    closeEditDialog();
+    await loadJobs();
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
 function setTaskStatus(status) {
-  const element = $('#task-status');
-  element.className = `task-status status-${status || 'idle'}`;
-  const label = { running: 'Running', succeeded: 'Completed', failed: 'Failed', idle: 'Idle' }[status] || status;
-  element.textContent = label;
+  const node = $('#task-status');
+  node.className = `task-status status-${status || 'idle'}`;
+  node.textContent = ({ running: 'Running', succeeded: 'Completed', failed: 'Failed', idle: 'Idle' })[status] || status;
+  $('#activity').hidden = !['running', 'failed'].includes(status);
 }
-
-function renderTask(task, force = false) {
+function renderTask(task) {
   if (!task) return;
-  state.latestTaskId = task.id;
   $('#terminal-task-name').textContent = `${task.label || 'job-agent'} · ${task.id}`;
   $('#terminal-output').textContent = task.output || '(No output yet.)';
-  if (force || $('#terminal-output').dataset.follow !== 'false') {
-    $('#terminal-output').scrollTop = $('#terminal-output').scrollHeight;
-  }
+  $('#terminal-output').scrollTop = $('#terminal-output').scrollHeight;
   setTaskStatus(task.status);
-  if (task.status === 'running') {
-    $('#terminal-output').dataset.follow = 'true';
-  }
 }
-
 async function monitorTask(taskId) {
   state.taskId = taskId;
   if (state.taskPoller) window.clearInterval(state.taskPoller);
-  const update = async () => {
+  async function update() {
     try {
       const task = await api(`/api/tasks/${encodeURIComponent(taskId)}`);
-      renderTask(task, true);
+      renderTask(task);
       if (task.status !== 'running') {
         window.clearInterval(state.taskPoller);
         state.taskPoller = null;
         state.taskId = null;
-        await loadJobs();
+        await Promise.all([loadJobs(), loadEmailStatus(), loadEmailReview()]);
         toast(task.status === 'succeeded' ? `${task.label} completed.` : `${task.label} failed. Check command activity.`, task.status === 'succeeded' ? 'success' : 'error');
       }
     } catch (error) {
-      window.clearInterval(state.taskPoller);
+      if (state.taskPoller) window.clearInterval(state.taskPoller);
       state.taskPoller = null;
       toast(`Could not read command output: ${error.message}`, 'error');
     }
-  };
+  }
   await update();
   if (state.taskId) state.taskPoller = window.setInterval(update, 900);
 }
-
 async function startAction(path, payload, label) {
   try {
     const result = await api(path, { method: 'POST', body: JSON.stringify(payload) });
     if (result.task_id) {
-      toast(`${label} started. Watch the command output below and respond in the terminal if prompted.`);
+      $('#activity').hidden = false;
+      toast(`${label} started. If it asks for input, use the terminal running the dashboard.`);
       await monitorTask(result.task_id);
       return true;
     }
@@ -261,85 +388,181 @@ $('#add-job-form').addEventListener('submit', async (event) => {
   const url = input.value.trim();
   if (!url) return;
   button.disabled = true;
-  button.textContent = 'Starting…';
+  button.textContent = 'Adding…';
   const started = await startAction('/api/actions/add-job', { url }, 'Add job');
   button.disabled = false;
-  button.innerHTML = '<span class="button-plus">＋</span> Add job';
+  button.textContent = 'Add from URL';
   if (started) input.value = '';
 });
+$('#manual-add-button').addEventListener('click', () => openEditDialog());
+$('#edit-form').addEventListener('submit', saveEdit);
+$('#cancel-edit').addEventListener('click', closeEditDialog);
+$('#close-edit-dialog').addEventListener('click', closeEditDialog);
+$('#edit-dialog').addEventListener('click', (event) => { if (event.target === $('#edit-dialog')) closeEditDialog(); });
 
+$('#jobs-table-body').addEventListener('change', async (event) => {
+  const select = event.target.closest('select[data-action="status"]');
+  if (!select) return;
+  const jobId = Number(select.dataset.jobId);
+  select.disabled = true;
+  try {
+    await api(`/api/jobs/${jobId}`, { method: 'PATCH', body: JSON.stringify({ status: select.value }) });
+    await loadJobs();
+    toast('Status updated.');
+  } catch (error) {
+    toast(error.message, 'error');
+    await loadJobs();
+  } finally { select.disabled = false; }
+});
 $('#jobs-table-body').addEventListener('click', async (event) => {
   const button = event.target.closest('button[data-action]');
   if (!button) return;
-  if (button.dataset.action === 'apply') {
+  const jobId = Number(button.dataset.jobId);
+  if (button.dataset.action === 'edit') {
+    const job = state.jobs.find((item) => Number(item.id) === jobId);
+    if (job) openEditDialog(job);
+  } else if (button.dataset.action === 'apply') {
     await loadResumes();
-    openApplyDialog(button.dataset.jobId, button.dataset.jobTitle);
-  }
-  if (button.dataset.action === 'mark-applied') {
-    const confirmed = window.confirm('Mark this job as applied? Do this only after you have submitted the application yourself.');
-    if (!confirmed) return;
-    const notes = window.prompt('Optional note (for example, confirmation number). Leave blank to skip.', '') || '';
-    await startAction('/api/actions/mark-applied', { job_id: Number(button.dataset.jobId), notes }, 'Mark applied');
-  }
-  if (button.dataset.action === 'delete') {
-    const jobId = Number(button.dataset.jobId);
-    const title = button.dataset.jobTitle || `Job #${jobId}`;
-    const confirmed = window.confirm(`Delete this application?\n\n${title}\n\nThis removes the job, its application status, and its activity history. This cannot be undone.`);
-    if (!confirmed) return;
+    $('#apply-job-id').value = jobId;
+    $('#apply-job-caption').textContent = `Job #${jobId}: ${button.dataset.jobTitle}. Review every field before submitting.`;
+    $('#apply-dialog').showModal();
+  } else if (button.dataset.action === 'delete') {
+    const label = button.dataset.jobTitle || `Job #${jobId}`;
+    if (!window.confirm(`Delete this application?\n\n${label}\n\nThis cannot be undone.`)) return;
     button.disabled = true;
     try {
       await api(`/api/jobs/${jobId}`, { method: 'DELETE' });
       await loadJobs();
-      toast(`Deleted ${title}.`);
+      toast('Application deleted.');
     } catch (error) {
-      toast(`Could not delete application: ${error.message}`, 'error');
+      toast(error.message, 'error');
       button.disabled = false;
     }
   }
 });
-
 $('#apply-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   const jobId = Number($('#apply-job-id').value);
   const resume = $('#resume-select').value;
-  if (!resume) {
-    toast('Choose a resume file first.', 'error');
-    return;
-  }
+  if (!resume) { toast('Choose a resume first.', 'error'); return; }
   $('#apply-dialog').close();
   await startAction('/api/actions/apply', { job_id: jobId, resume }, 'Assist with application');
 });
-
-function closeDialog() { $('#apply-dialog').close(); }
-$('#cancel-apply').addEventListener('click', closeDialog);
-$('#close-dialog').addEventListener('click', closeDialog);
-$('#apply-dialog').addEventListener('click', (event) => {
-  if (event.target === $('#apply-dialog')) closeDialog();
-});
-
+$('#cancel-apply').addEventListener('click', () => $('#apply-dialog').close());
+$('#close-dialog').addEventListener('click', () => $('#apply-dialog').close());
+$('#apply-dialog').addEventListener('click', (event) => { if (event.target === $('#apply-dialog')) $('#apply-dialog').close(); });
 $('#search-input').addEventListener('input', renderJobs);
 $('#status-filter').addEventListener('change', renderJobs);
-$('#refresh-button').addEventListener('click', async () => {
-  await Promise.all([loadJobs(), loadResumes()]);
-  toast('Dashboard refreshed.');
+$('#refresh-button').addEventListener('click', async () => { await Promise.all([loadJobs(), loadResumes()]); toast('Tracker refreshed.'); });
+$('#export-button').addEventListener('click', async () => {
+  const button = $('#export-button');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/export.csv', { cache: 'no-store' });
+    if (!response.ok) {
+      let payload = {};
+      try { payload = await response.json(); } catch {}
+      throw new Error(payload.error || 'CSV export failed.');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'job-applications.csv';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast(`Exported ${state.jobs.length} applications to CSV.`);
+  } catch (error) { toast(error.message, 'error'); }
+  finally { button.disabled = false; }
 });
-$('#export-button').addEventListener('click', () => startAction('/api/actions/export', {}, 'Export CSV'));
-$('#clear-log-button').addEventListener('click', () => {
-  $('#terminal-output').textContent = 'Output view cleared. The CLI task continues if it is running.';
-  $('#terminal-output').dataset.follow = 'false';
+$('#import-button').addEventListener('click', () => $('#csv-file-input').click());
+$('#csv-file-input').addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    toast('Choose a .csv file.', 'error');
+    event.target.value = '';
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    toast('CSV files must be 5 MB or smaller.', 'error');
+    event.target.value = '';
+    return;
+  }
+  const button = $('#import-button');
+  button.disabled = true;
+  button.textContent = 'Importing…';
+  try {
+    const csvText = await file.text();
+    if (!window.confirm(`Import ${file.name}?\n\nRows are matched by job URL. Matching applications will be updated; new URLs will be added. Applications not in this file will not be deleted. A database backup is created before changes.`)) return;
+    const result = await api('/api/import.csv', { method: 'POST', body: JSON.stringify({ csv_text: csvText }) });
+    await loadJobs();
+    const details = result.import || {};
+    toast(`Import complete: ${details.inserted || 0} added, ${details.updated || 0} updated. Backup saved.`);
+  } catch (error) { toast(`CSV import failed: ${error.message}`, 'error'); }
+  finally {
+    button.disabled = false;
+    button.textContent = 'Import CSV';
+    event.target.value = '';
+  }
 });
-
+$('#clear-log-button').addEventListener('click', () => { $('#terminal-output').textContent = 'Output view cleared. The task continues if running.'; });
+$('#gmail-connect-button').addEventListener('click', async () => {
+  await startAction('/api/actions/email-connect', {}, 'Connect Gmail');
+});
+$('#gmail-sync-button').addEventListener('click', async () => {
+  await startAction('/api/actions/email-sync', {}, 'Sync Gmail');
+});
+$('#gmail-disconnect-button').addEventListener('click', async () => {
+  if (!window.confirm('Remove the saved Gmail token and turn off automatic sync? You can revoke Job-Agent fully from your Google Account security settings too.')) return;
+  const button = $('#gmail-disconnect-button');
+  button.disabled = true;
+  try {
+    await api('/api/actions/email-disconnect', { method: 'POST', body: JSON.stringify({}) });
+    toast('Gmail disconnected on this device.');
+    await Promise.all([loadEmailStatus(), loadEmailReview()]);
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+$('#gmail-auto-sync').addEventListener('change', async (event) => {
+  const checkbox = event.currentTarget;
+  checkbox.disabled = true;
+  try {
+    await api('/api/email/auto-sync', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: checkbox.checked }),
+    });
+    toast(checkbox.checked ? 'Automatic Gmail sync enabled.' : 'Automatic Gmail sync disabled.');
+  } catch (error) {
+    toast(error.message, 'error');
+    await loadEmailStatus();
+  } finally {
+    checkbox.disabled = !state.gmailConnected;
+    await loadEmailStatus();
+  }
+});
+$('#gmail-review-refresh').addEventListener('click', async () => {
+  await Promise.all([loadEmailStatus(), loadEmailReview()]);
+  toast('Email review queue refreshed.');
+});
 async function init() {
-  await Promise.all([loadJobs(), loadResumes()]);
+  await Promise.all([loadJobs(), loadResumes(), loadEmailStatus(), loadEmailReview()]);
+  // The scheduler runs in the local server process, so refresh the UI periodically even
+  // when no foreground CLI task is polling for output.
+  window.setInterval(() => {
+    Promise.all([loadJobs(), loadEmailStatus(), loadEmailReview()]);
+  }, 60_000);
   try {
     const payload = await api('/api/tasks');
     if (payload.latest) {
-      renderTask(payload.latest, true);
+      renderTask(payload.latest);
       if (payload.latest.status === 'running') await monitorTask(payload.latest.id);
     }
-  } catch (error) {
-    console.warn('Could not restore last task:', error.message);
-  }
+  } catch (error) { console.warn('Could not restore last task:', error.message); }
 }
-
 init();

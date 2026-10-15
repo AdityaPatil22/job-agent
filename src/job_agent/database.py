@@ -9,13 +9,14 @@ from pathlib import Path
 from typing import Any
 
 from .models import ApplicationStatus, Job
+from .urls import normalize_job_url
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "jobs.db"
 VALID_STATUSES = {
     "discovered", "shortlisted", "ready", "applied",
-    "interview", "rejected", "withdrawn",
+    "interview", "offer", "rejected", "withdrawn",
 }
 
 
@@ -69,32 +70,59 @@ def _row_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
 
 
 def add_job(job_data: Job | dict[str, Any], db_path: str | Path | None = None) -> int:
-    """Insert a job, deduplicating on URL, and return its ID."""
+    """Insert or update a job, deduplicating common tracking-URL variants."""
     init_db(db_path)
     job = job_data if isinstance(job_data, Job) else Job.model_validate(job_data)
+    canonical_url = normalize_job_url(job.url)
     timestamp = datetime.now(timezone.utc).isoformat()
+
     with _connect(db_path) as connection:
-        connection.execute(
-            """
-            INSERT INTO jobs (company, title, url, description, location, date_found)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(url) DO UPDATE SET
-              company = CASE WHEN excluded.company != 'Unknown company' THEN excluded.company ELSE jobs.company END,
-              title = CASE WHEN excluded.title != 'Untitled role' THEN excluded.title ELSE jobs.title END,
-              description = CASE WHEN excluded.description != '' THEN excluded.description ELSE jobs.description END,
-              location = CASE WHEN excluded.location != '' THEN excluded.location ELSE jobs.location END
-            """,
-            (job.company, job.title, job.url, job.description, job.location, job.date_found.isoformat()),
-        )
-        row = connection.execute("SELECT id FROM jobs WHERE url = ?", (job.url,)).fetchone()
-        job_id = int(row["id"])
+        # Serialize URL matching and insertion so concurrent adds do not race.
+        connection.execute("BEGIN IMMEDIATE")
+        existing_id = None
+        for row in connection.execute("SELECT id, url FROM jobs").fetchall():
+            try:
+                matches = normalize_job_url(str(row["url"])) == canonical_url
+            except ValueError:
+                matches = False
+            if matches:
+                existing_id = int(row["id"])
+                break
+
+        if existing_id is None:
+            cursor = connection.execute(
+                """INSERT INTO jobs (company, title, url, description, location, date_found)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (
+                    job.company, job.title, canonical_url, job.description,
+                    job.location, job.date_found.isoformat(),
+                ),
+            )
+            job_id = int(cursor.lastrowid)
+            event_type = "job_added"
+        else:
+            job_id = existing_id
+            connection.execute(
+                """UPDATE jobs SET
+                     company = CASE WHEN ? != 'Unknown company' THEN ? ELSE company END,
+                     title = CASE WHEN ? != 'Untitled role' THEN ? ELSE title END,
+                     description = CASE WHEN ? != '' THEN ? ELSE description END,
+                     location = CASE WHEN ? != '' THEN ? ELSE location END
+                   WHERE id = ?""",
+                (
+                    job.company, job.company, job.title, job.title,
+                    job.description, job.description, job.location, job.location, job_id,
+                ),
+            )
+            event_type = "job_updated"
+
         connection.execute(
             "INSERT OR IGNORE INTO applications (job_id, status, updated_at) VALUES (?, 'discovered', ?)",
             (job_id, timestamp),
         )
         connection.execute(
             "INSERT INTO activity_log (entity_id, event_type, timestamp, outcome) VALUES (?, ?, ?, ?)",
-            (job_id, "job_added", timestamp, job.title),
+            (job_id, event_type, timestamp, job.title),
         )
         return job_id
 
@@ -106,9 +134,18 @@ def get_job(job_id: int, db_path: str | Path | None = None) -> dict[str, Any] | 
 
 
 def get_job_by_url(url: str, db_path: str | Path | None = None) -> dict[str, Any] | None:
+    """Find a job by canonical URL, including records created before URL normalization."""
+    canonical_url = normalize_job_url(url)
     init_db(db_path)
     with _connect(db_path) as connection:
-        return _row_dict(connection.execute("SELECT * FROM jobs WHERE url = ?", (url,)).fetchone())
+        for row in connection.execute("SELECT * FROM jobs").fetchall():
+            try:
+                matches = normalize_job_url(str(row["url"])) == canonical_url
+            except ValueError:
+                matches = False
+            if matches:
+                return _row_dict(row)
+    return None
 
 
 def list_jobs(status: str | None = None, db_path: str | Path | None = None) -> list[dict[str, Any]]:

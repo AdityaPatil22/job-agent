@@ -4,115 +4,143 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>Job-Agent Dashboard</title>
+  <title>Job-Agent · Applications</title>
   <link rel="stylesheet" href="/styles.css">
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <a class="brand" href="#top" aria-label="Job-Agent home">
+  <main class="main-content" id="top">
+    <header class="topbar">
+      <div class="brand">
         <span class="brand-mark">J</span>
-        <span class="brand-copy"><strong>job-agent</strong><small>APPLICATION DESK</small></span>
-      </a>
-      <nav class="side-nav" aria-label="Main navigation">
-        <a class="nav-link active" href="#overview"><span class="nav-icon">◫</span> Overview</a>
-        <a class="nav-link" href="#applications"><span class="nav-icon">▤</span> Applications</a>
-        <a class="nav-link" href="#activity"><span class="nav-icon">⌁</span> Command activity</a>
-      </nav>
-      <div class="sidebar-bottom">
-        <span class="online-dot"></span>
-        <div><strong>Local workspace</strong><small>Data stays on this machine</small></div>
+        <div><strong>Job-Agent</strong><p class="topbar-subtitle">A simple place to manage your job search.</p></div>
       </div>
-    </aside>
+      <div class="topbar-actions">
+        <span class="server-pill"><span class="online-dot"></span> Stored locally</span>
+        <button id="refresh-button" class="button button-secondary" type="button">Refresh</button>
+      </div>
+    </header>
 
-    <main class="main-content" id="top">
-      <header class="topbar">
+    <section class="stats-grid" aria-label="Application summary">
+      <article class="stat-card"><span>Total applications</span><strong id="stat-total">—</strong></article>
+      <article class="stat-card"><span>In progress</span><strong id="stat-progress">—</strong></article>
+      <article class="stat-card"><span>Applied</span><strong id="stat-applied">—</strong></article>
+      <article class="stat-card"><span>Interviews</span><strong id="stat-interviews">—</strong></article>
+      <article class="stat-card"><span>Follow-ups due</span><strong id="stat-followups">—</strong></article>
+    </section>
+
+    <section class="quick-add panel">
+      <div><h2>Add a job</h2><p>Paste a job posting URL, or add an application manually.</p></div>
+      <form id="add-job-form" class="add-job-form">
+        <label class="field-label" for="job-url">Job posting URL</label>
+        <div class="add-job-controls">
+          <input id="job-url" name="url" type="url" placeholder="https://careers.company.com/jobs/123" required autocomplete="url">
+          <button class="button button-primary" type="submit">Add from URL</button>
+          <button id="manual-add-button" class="button button-secondary" type="button">Add manually</button>
+        </div>
+        <p class="field-hint">The URL is parsed by Job-Agent and stored in your local SQLite database.</p>
+      </form>
+    </section>
+
+    <section id="gmail-integration" class="gmail-integration panel">
+      <div class="section-heading gmail-heading">
         <div>
-          <div class="eyebrow">PERSONAL WORKSPACE</div>
-          <h1>Application dashboard</h1>
-          <p class="topbar-subtitle">Your job search, organized in one place. Track progress and start applications without leaving the dashboard.</p>
+          <h2>Gmail integration <span id="gmail-status" class="gmail-status status-disconnected">Not connected</span></h2>
+          <p>Detect application emails and keep your tracker updated without granting permission to send, delete, or modify email.</p>
         </div>
-        <div class="topbar-actions">
-          <span class="server-pill"><span class="online-dot"></span> Local service running</span>
-          <button id="refresh-button" class="button button-secondary" type="button">↻ Refresh</button>
+        <div class="gmail-actions">
+          <button id="gmail-connect-button" class="button button-primary" type="button">Connect Gmail</button>
+          <button id="gmail-sync-button" class="button button-secondary" type="button" disabled>Sync now</button>
+          <button id="gmail-disconnect-button" class="button button-secondary" type="button" hidden>Disconnect</button>
         </div>
-      </header>
+      </div>
+      <div class="gmail-details">
+        <div class="gmail-account-detail"><span class="detail-label">Account</span><strong id="gmail-account">Not connected</strong></div>
+        <div class="gmail-account-detail"><span class="detail-label">Last sync</span><strong id="gmail-last-sync">Never</strong></div>
+        <label class="gmail-auto-toggle"><input id="gmail-auto-sync" type="checkbox" disabled><span><strong>Automatic sync</strong><small>Check Gmail every 15 minutes while the dashboard is running.</small></span></label>
+      </div>
+      <div id="gmail-setup-help" class="gmail-setup-help">
+        <strong>One-time setup</strong>
+        <span>Install the Gmail extra with <code>python -m pip install -e ".[gmail]"</code>, enable the Gmail API in Google Cloud, create a Desktop OAuth client, and save its JSON as <code>config/gmail-credentials.json</code>. Then select Connect Gmail.</span>
+        <a href="/gmail-setup.html" id="gmail-setup-link">Gmail setup guide</a>
+      </div>
+      <p class="gmail-privacy-note">Only recent email metadata and a short preview are stored locally. Full email bodies are processed in memory. High-confidence matches update automatically; uncertain matches wait for your review. Gmail itself is never changed.</p>
+    </section>
 
-      <section id="overview" class="stats-grid" aria-label="Application summary">
-        <article class="stat-card stat-total"><div class="stat-top"><span>Total tracked</span><span class="stat-symbol">▤</span></div><strong id="stat-total">—</strong><small>All opportunities in your tracker</small></article>
-        <article class="stat-card"><div class="stat-top"><span>In progress</span><span class="stat-symbol symbol-blue">◷</span></div><strong id="stat-progress">—</strong><small>Discovered, shortlisted or ready</small></article>
-        <article class="stat-card"><div class="stat-top"><span>Applied</span><span class="stat-symbol symbol-green">✓</span></div><strong id="stat-applied">—</strong><small>Applications submitted by you</small></article>
-        <article class="stat-card"><div class="stat-top"><span>Interviews</span><span class="stat-symbol symbol-violet">✳</span></div><strong id="stat-interviews">—</strong><small>Opportunities in interview stage</small></article>
-      </section>
+    <section id="gmail-review-section" class="gmail-review-section">
+      <div class="section-heading">
+        <div><h2>Email review queue <span id="gmail-review-count" class="count-chip">0</span></h2><p>Confirm the correct job before applying an uncertain email update.</p></div>
+        <button id="gmail-review-refresh" class="button button-secondary" type="button">Refresh queue</button>
+      </div>
+      <div id="gmail-review-empty" class="empty-state panel"><h3>No emails need review</h3><p>Unmatched or ambiguous application emails will appear here after a sync.</p></div>
+      <div id="gmail-review-list" class="gmail-review-list"></div>
+    </section>
 
-      <section class="quick-add panel" aria-labelledby="quick-add-title">
-        <div class="panel-heading quick-add-heading">
-          <div><div class="eyebrow">NEW OPPORTUNITY</div><h2 id="quick-add-title">Add a job to your tracker</h2><p>Paste the job posting URL. Job-Agent will parse it and save it to SQLite.</p></div>
-          <span class="step-number">01 <span>/ 02</span></span>
+    <section id="applications" class="applications-section">
+      <div class="section-heading">
+        <div><h2>Applications <span id="jobs-count" class="count-chip">0</span></h2><p>Keep track of each role and what needs to happen next.</p></div>
+        <div class="table-actions"><button id="import-button" class="button button-secondary" type="button">Import CSV</button><button id="export-button" class="button button-secondary" type="button">Export CSV</button><input id="csv-file-input" type="file" accept=".csv,text/csv" hidden></div>
+      </div>
+      <div class="tracker-toolbar"><span id="last-updated" class="sync-indicator"><span class="online-dot"></span> Synced with local database</span><span class="toolbar-hint">CSV import merges by job URL · existing records are updated</span></div>
+      <div class="filters panel">
+        <label class="search-box"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Search company, role or location…" aria-label="Search applications"></label>
+        <label class="filter-select-label"><span>Status</span><select id="status-filter" aria-label="Filter by status">
+          <option value="all">All statuses</option><option value="discovered">Discovered</option><option value="shortlisted">Shortlisted</option><option value="ready">Ready to review</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option>
+        </select></label>
+      </div>
+      <div class="jobs-panel panel">
+        <div id="jobs-loading" class="loading-state"><span class="spinner"></span> Loading applications…</div>
+        <div id="jobs-empty" class="empty-state" hidden><h3>No applications yet</h3><p>Add a job URL above to begin tracking your applications.</p></div>
+        <div id="jobs-no-results" class="empty-state" hidden><h3>No matching applications</h3><p>Try another search or status.</p></div>
+        <div id="jobs-table-wrap" class="table-wrap" hidden>
+          <table>
+            <thead><tr><th>ID</th><th>COMPANY / ROLE</th><th>APPLIED ON</th><th>STATUS</th><th>FOLLOW-UP</th><th>RESUME</th><th>ACTIONS</th></tr></thead>
+            <tbody id="jobs-table-body"></tbody>
+          </table>
         </div>
-        <form id="add-job-form" class="add-job-form">
-          <label class="field-label" for="job-url">Job posting URL</label>
-          <div class="add-job-controls">
-            <input id="job-url" name="url" type="url" placeholder="https://careers.company.com/jobs/123" required autocomplete="url">
-            <button class="button button-primary" type="submit"><span class="button-plus">＋</span> Add job</button>
-          </div>
-          <p class="field-hint">Already in your tracker? Duplicate URLs are updated rather than added twice.</p>
-        </form>
-      </section>
+      </div>
+    </section>
 
-      <section id="applications" class="applications-section">
-        <div class="section-heading">
-          <div><div class="eyebrow">YOUR PIPELINE</div><h2>Applications <span id="jobs-count" class="count-chip">0</span></h2></div>
-          <button id="export-button" class="button button-secondary" type="button">⇩ Export CSV</button>
-        </div>
+    <section id="activity" class="activity-section" hidden>
+      <div class="section-heading activity-section-heading"><div><h2>Command activity</h2><p>Output from an active autofill or export task.</p></div><span id="task-status" class="task-status status-idle">Idle</span></div>
+      <div class="terminal panel">
+        <div class="terminal-titlebar"><span id="terminal-task-name">job-agent — output</span><button id="clear-log-button" class="terminal-clear" type="button">Clear view</button></div>
+        <pre id="terminal-output" class="terminal-output" aria-live="polite">No task has started.</pre>
+      </div>
+      <p class="field-hint">If a task asks for input, respond in the terminal running this dashboard. Job-Agent never submits an application automatically.</p>
+    </section>
+    <footer class="page-footer"><span>Job-Agent · Local-first application tracking</span><span>SQLite · Auto-backup before CSV import</span></footer>
+  </main>
 
-        <div class="filters panel">
-          <label class="search-box"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Search company, role or location…" aria-label="Search applications"></label>
-          <label class="filter-select-label"><span>Status</span><select id="status-filter" aria-label="Filter by status">
-            <option value="all">All statuses</option><option value="discovered">Discovered</option><option value="shortlisted">Shortlisted</option><option value="ready">Ready to review</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option>
-          </select></label>
-        </div>
-
-        <div class="jobs-panel panel">
-          <div id="jobs-loading" class="loading-state"><span class="spinner"></span> Loading applications…</div>
-          <div id="jobs-empty" class="empty-state" hidden><div class="empty-icon">▤</div><h3>No applications yet</h3><p>Add a job URL above to start building your pipeline.</p></div>
-          <div id="jobs-no-results" class="empty-state" hidden><h3>No matching applications</h3><p>Try a different search or status filter.</p></div>
-          <div id="jobs-table-wrap" class="table-wrap" hidden>
-            <table>
-              <thead><tr><th>ROLE / COMPANY</th><th>LOCATION</th><th>STATUS</th><th>DATE ADDED</th><th class="actions-heading">ACTIONS</th></tr></thead>
-              <tbody id="jobs-table-body"></tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section id="activity" class="activity-section">
-        <div class="section-heading activity-section-heading"><div><div class="eyebrow">RUN HISTORY</div><h2>Command activity</h2><p>See the progress and output of actions started from this dashboard.</p></div><span id="task-status" class="task-status status-idle">Idle</span></div>
-        <div class="terminal panel">
-          <div class="terminal-titlebar"><div class="terminal-lights"><i></i><i></i><i></i></div><span id="terminal-task-name">job-agent — output</span><button id="clear-log-button" class="terminal-clear" type="button">Clear view</button></div>
-          <pre id="terminal-output" class="terminal-output" aria-live="polite">Waiting for your first action…
-
-Choose “Assist” on a job to run the autofill workflow. It opens a visible browser and leaves final submission to you.</pre>
-        </div>
-        <div class="notice-row"><span class="notice-icon">i</span><p><strong>Manual review stays in the loop.</strong> Job-Agent can fill known fields, but it will not click Submit or Apply for you. If the CLI asks for input, respond in the terminal running this dashboard.</p></div>
-      </section>
-
-      <footer class="page-footer"><span>Job-Agent · Local-first job application tracking</span><span>Python · Playwright · SQLite</span></footer>
-    </main>
-  </div>
+  <dialog id="edit-dialog" class="apply-dialog">
+    <form id="edit-form">
+      <div class="dialog-top"><div><p class="eyebrow" id="edit-eyebrow">APPLICATION</p><h2 id="edit-heading">Add application</h2></div><button id="close-edit-dialog" class="icon-button" type="button" aria-label="Close">×</button></div>
+      <input id="edit-job-id" type="hidden">
+      <div class="form-grid">
+        <label>Company <input id="edit-company" name="company" required maxlength="200"></label>
+        <label>Role <input id="edit-title" name="title" required maxlength="300"></label>
+        <label class="field-wide">Job URL <input id="edit-url" name="url" type="url" required placeholder="https://…"></label>
+        <label>Location <input id="edit-location" name="location" maxlength="200"></label>
+        <label>Status <select id="edit-status" name="status"><option value="discovered">Discovered</option><option value="shortlisted">Shortlisted</option><option value="ready">Ready to review</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option></select></label>
+        <label>Applied on <input id="edit-applied-date" name="applied_date" type="date"></label>
+        <label>Next follow-up <input id="edit-next-action" name="next_action" type="date"></label>
+        <label class="field-wide">Resume used <input id="edit-resume" name="resume_used" maxlength="250" placeholder="e.g. ai-engineer.pdf"></label>
+        <label class="field-wide">Notes <textarea id="edit-notes" name="notes" rows="3" maxlength="4000" placeholder="Recruiter, interview details, follow-up context…"></textarea></label>
+      </div>
+      <div class="dialog-actions"><button id="cancel-edit" class="button button-secondary" type="button">Cancel</button><button id="save-edit" class="button button-primary" type="submit">Save application</button></div>
+    </form>
+  </dialog>
 
   <dialog id="apply-dialog" class="apply-dialog">
     <form id="apply-form" method="dialog">
-      <div class="dialog-top"><div class="eyebrow">ASSISTED APPLICATION</div><button id="close-dialog" class="icon-button" type="button" aria-label="Close">×</button></div>
-      <h2>Prepare your application</h2>
+      <div class="dialog-top"><div><p class="eyebrow">ASSISTED APPLICATION</p><h2>Prepare your application</h2></div><button id="close-dialog" class="icon-button" type="button" aria-label="Close">×</button></div>
       <p id="apply-job-caption" class="dialog-caption">Choose a resume to begin.</p>
       <input id="apply-job-id" type="hidden">
       <label class="field-label" for="resume-select">Resume file</label>
       <select id="resume-select" required><option value="">Loading resumes…</option></select>
-      <p class="field-hint">Files are read from your project’s <code>resumes/</code> directory.</p>
-      <div id="resume-warning" class="inline-warning" hidden>No PDF, DOC or DOCX files were found. Add a resume to the <code>resumes/</code> folder and refresh.</div>
-      <div class="dialog-actions"><button id="cancel-apply" class="button button-secondary" type="button">Cancel</button><button id="start-apply-button" class="button button-primary" type="submit">Run autofill workflow →</button></div>
+      <p class="field-hint">Files are read from your project’s resumes/ directory.</p>
+      <div id="resume-warning" class="inline-warning" hidden>No PDF, DOC or DOCX files were found. Add a resume to the resumes/ folder and refresh.</div>
+      <div class="dialog-actions"><button id="cancel-apply" class="button button-secondary" type="button">Cancel</button><button id="start-apply-button" class="button button-primary" type="submit">Run autofill</button></div>
     </form>
   </dialog>
   <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>

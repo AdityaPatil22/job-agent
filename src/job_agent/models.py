@@ -15,6 +15,7 @@ ApplicationStatus = Literal[
     "ready",
     "applied",
     "interview",
+    "offer",
     "rejected",
     "withdrawn",
 ]

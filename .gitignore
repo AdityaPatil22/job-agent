@@ -219,11 +219,18 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Job-Agent project files
+# Job-Agent project files and personal application data
 data/jobs.db
+data/jobs.db-*
+data/backups/
+data/*.csv
 data/chromium_profile/
 config/profile.json
 config/preferences.json
 config/field_mappings.json
+config/gmail-credentials.json
+data/gmail/
+*.token.json
 resumes/*.pdf
+resumes/*.doc
 resumes/*.docx
