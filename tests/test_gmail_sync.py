@@ -151,6 +151,24 @@ def test_disconnect_removes_local_token_and_disables_auto_sync(tmp_path: Path, m
     assert gmail_sync.get_status(db_path=database_path)["auto_sync"] is False
 
 
+def test_email_sync_command_reports_summary(monkeypatch) -> None:
+    monkeypatch.setattr(main_module, "init_db", lambda: None)
+    monkeypatch.setattr(
+        gmail_sync,
+        "sync_gmail",
+        lambda max_results: {
+            "processed": 4, "auto_updated": 2, "needs_review": 1, "ignored": 1,
+        },
+    )
+
+    result = CliRunner().invoke(main_module.cli, ["email-sync", "--limit", "30"])
+
+    assert result.exit_code == 0, result.output
+    assert "4 new messages processed" in result.output
+    assert "2 statuses updated" in result.output
+    assert "1 need review" in result.output
+
+
 def test_email_status_command_reports_optional_dependency_state(monkeypatch) -> None:
     monkeypatch.setattr(main_module, "init_db", lambda: None)
     monkeypatch.setattr(
