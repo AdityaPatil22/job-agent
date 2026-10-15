@@ -460,7 +460,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     "description": "", "date_found": date.today().isoformat(),
                 })
                 fields = {key: payload[key] for key in ("status", "resume_used", "applied_date", "next_action", "notes") if key in payload}
-                updated = _update_job(job_id, fields)
+                updated = _update_job(job_id, fields) if fields else next((item for item in list_jobs() if int(item["id"]) == job_id), None)
                 self._json({"job": updated}, 201)
                 return
 
