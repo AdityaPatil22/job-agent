@@ -17,7 +17,7 @@ def seed_job(database_path: Path, company: str = "Acme", title: str = "Software 
         {
             "company": company,
             "title": title,
-            "url": f"https://careers.{company.casefold().replace(' ', '')}.example/jobs/123",
+            "url": f"https://careers.{company.casefold().replace(' ', '')}.example/jobs/{title.casefold().replace(' ', '-')}",
             "description": "",
             "location": "Pune",
             "date_found": "2026-10-01",
