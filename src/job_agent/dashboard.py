@@ -18,7 +18,6 @@ import subprocess
 import sys
 import threading
 import uuid
-import shutil
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -363,7 +362,9 @@ def _import_csv_text(csv_text: str) -> dict[str, Any]:
         backup_dir = DEFAULT_DB_PATH.parent / "backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
         backup_path = backup_dir / f"jobs-before-csv-import-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-        shutil.copy2(DEFAULT_DB_PATH, backup_path)
+        # SQLite's backup API includes committed WAL data, unlike copying the .db file.
+        with sqlite3.connect(DEFAULT_DB_PATH) as source, sqlite3.connect(backup_path) as backup:
+            source.backup(backup)
 
     inserted = updated = 0
     with sqlite3.connect(DEFAULT_DB_PATH) as connection:
@@ -441,13 +442,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         body = json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
         self._send_bytes(body, "application/json; charset=utf-8", status)
 
-    def _read_json(self) -> dict[str, Any]:
+    def _read_json(self, max_bytes: int = MAX_REQUEST_BYTES) -> dict[str, Any]:
         try:
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError as exc:
             raise ValueError("Invalid Content-Length") from exc
-        if length <= 0 or length > MAX_REQUEST_BYTES:
-            raise ValueError("Request body must be between 1 byte and 64 KB")
+        if length <= 0 or length > max_bytes:
+            raise ValueError(f"Request body must be between 1 byte and {max_bytes // (1024 * 1024) or 1} MB")
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -560,7 +561,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         path = urlsplit(self.path).path
         try:
-            payload = self._read_json()
+            payload = self._read_json(max_bytes=6 * 1024 * 1024 if path == "/api/import.csv" else MAX_REQUEST_BYTES)
             if path == "/api/import.csv":
                 result = _import_csv_text(payload.get("csv_text"))
                 self._json({"import": result, "jobs": list_jobs()})
