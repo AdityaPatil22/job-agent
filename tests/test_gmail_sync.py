@@ -137,6 +137,84 @@ def test_review_dismiss_does_not_change_application(tmp_path: Path) -> None:
     assert get_application(job_id, db_path=database_path)["status"] == "discovered"
 
 
+def test_sync_auto_updates_high_confidence_email_once(tmp_path: Path, monkeypatch) -> None:
+    import base64
+
+    database_path = tmp_path / "jobs.db"
+    job_id = seed_job(database_path)
+    body = "The Acme team would like to schedule an interview for the Software Engineer role."
+    encoded_body = base64.urlsafe_b64encode(body.encode()).decode().rstrip("=")
+    message = {
+        "id": "gmail-auto-message",
+        "threadId": "gmail-auto-thread",
+        "internalDate": "1792051200000",
+        "snippet": body,
+        "payload": {
+            "mimeType": "text/plain",
+            "headers": [
+                {"name": "From", "value": "Acme Recruiting <recruiting@acme.example>"},
+                {"name": "Subject", "value": "Interview request for Software Engineer at Acme"},
+                {"name": "Date", "value": "Thu, 15 Oct 2026 09:00:00 +0000"},
+            ],
+            "body": {"data": encoded_body},
+        },
+    }
+
+    class Request:
+        def __init__(self, response):
+            self.response = response
+
+        def execute(self):
+            return self.response
+
+    class Messages:
+        def list(self, **kwargs):
+            return Request({"messages": [{"id": "gmail-auto-message", "threadId": "gmail-auto-thread"}]})
+
+        def get(self, **kwargs):
+            return Request(message)
+
+    class Users:
+        def messages(self):
+            return Messages()
+
+        def getProfile(self, **kwargs):
+            return Request({"emailAddress": "candidate@example.com"})
+
+    class Service:
+        def users(self):
+            return Users()
+
+    service = Service()
+    fake_http_error = type("FakeHttpError", (Exception,), {})
+    monkeypatch.setattr(
+        gmail_sync,
+        "_load_credentials",
+        lambda: (object(), lambda *args, **kwargs: service, fake_http_error),
+    )
+
+    first = gmail_sync.sync_gmail(db_path=database_path, max_results=10)
+    second = gmail_sync.sync_gmail(db_path=database_path, max_results=10)
+
+    assert first["processed"] == 1
+    assert first["auto_updated"] == 1
+    assert first["needs_review"] == 0
+    assert second["processed"] == 0
+    assert second["auto_updated"] == 0
+    assert get_application(job_id, db_path=database_path)["status"] == "interview"
+    with sqlite3.connect(database_path) as connection:
+        event = connection.execute(
+            "SELECT disposition, subject FROM email_events WHERE message_id=?",
+            ("gmail-auto-message",),
+        ).fetchone()
+        activity_count = connection.execute(
+            "SELECT COUNT(*) FROM activity_log WHERE entity_id=? AND event_type='gmail_status_update'",
+            (job_id,),
+        ).fetchone()[0]
+    assert event == ("auto_applied", "Interview request for Software Engineer at Acme")
+    assert activity_count == 1
+
+
 def test_sync_lease_prevents_parallel_processes(tmp_path: Path) -> None:
     database_path = tmp_path / "jobs.db"
     gmail_sync._init_email_tables(database_path)
