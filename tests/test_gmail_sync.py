@@ -83,6 +83,36 @@ def test_ambiguous_company_match_requires_review(tmp_path: Path) -> None:
     assert "Multiple" in match["reason"] or "Only part" in match["reason"]
 
 
+def test_review_queue_reads_status_from_applications_table(tmp_path: Path) -> None:
+    database_path = tmp_path / "jobs.db"
+    job_id = seed_job(database_path)
+    gmail_sync._init_email_tables(database_path)
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """INSERT INTO email_events
+               (message_id,subject,detected_status,job_id,confidence,disposition,reason,processed_at)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                "gmail-review-queue-status",
+                "Interview invitation",
+                "interview",
+                job_id,
+                0.65,
+                "needs_review",
+                "Please confirm job match",
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+
+    items = gmail_sync.list_review_events(db_path=database_path)
+
+    assert len(items) == 1
+    assert items[0]["job_id"] == job_id
+    assert items[0]["job_company"] == "Acme"
+    assert items[0]["job_title"] == "Software Engineer"
+    assert items[0]["current_status"] == "discovered"
+
+
 def test_review_approval_updates_selected_job_and_records_activity(tmp_path: Path) -> None:
     database_path = tmp_path / "jobs.db"
     job_id = seed_job(database_path)
