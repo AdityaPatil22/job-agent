@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Connect Gmail · Job-Agent</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .guide { max-width: 820px; margin: 32px auto; padding: 0 20px 40px; }
+    .guide-panel { padding: 24px; }
+    .guide h1 { margin: 0 0 8px; font-size: 28px; letter-spacing: -0.7px; }
+    .guide h2 { margin: 24px 0 9px; font-size: 17px; }
+    .guide p,.guide li { color: #475467; font-size: 13px; line-height: 1.7; }
+    .guide ol { padding-left: 22px; }
+    .guide li { padding-left: 4px; margin: 6px 0; }
+    .guide code { overflow-wrap: anywhere; }
+    .guide-warning { padding: 12px; border: 1px solid #f0d9a2; border-radius: 7px; background: #fff6df; color: #805400; font-size: 12px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <main class="guide">
+    <header class="topbar">
+      <a class="brand" href="/">
+        <span class="brand-mark">J</span>
+        <div><strong>Job-Agent</strong><p class="topbar-subtitle">Gmail integration setup</p></div>
+      </a>
+      <a class="button button-secondary" href="/">Back to dashboard</a>
+    </header>
+    <section class="panel guide-panel">
+      <h1>Connect Gmail</h1>
+      <p>Job-Agent uses Google's Gmail API with read-only access. OAuth credentials and a token are stored on this computer. The app does not send, delete, archive, or label email.</p>
+      <h2>1. Install the Gmail dependencies</h2>
+      <p>From the repository root, activate your virtual environment and run:</p>
+      <p><code>python -m pip install -e ".[gmail]"</code></p>
+      <h2>2. Enable the Gmail API</h2>
+      <ol>
+        <li>Open the <a href="https://console.cloud.google.com/" target="_blank" rel="noopener noreferrer">Google Cloud Console</a> and create or select a project.</li>
+        <li>Enable the <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener noreferrer">Gmail API</a> for that project.</li>
+      </ol>
+      <h2>3. Create an OAuth Desktop client</h2>
+      <ol>
+        <li>Configure Google Auth Platform's branding and audience. For a personal Gmail account, choose External and add your Google account as a test user while the app is in Testing.</li>
+        <li>Under Clients, create an OAuth client ID with application type <strong>Desktop app</strong>.</li>
+        <li>Download the JSON file. Save it in your repository as <code>config/gmail-credentials.json</code>. Keep this file private; Git ignores it.</li>
+      </ol>
+      <h2>4. Connect and sync</h2>
+      <p>Restart the dashboard with <code>job-agent start</code>, click <strong>Connect Gmail</strong>, then follow Google's consent flow in your browser. The requested permission is Gmail read-only. Once connected, use Sync now or turn on automatic syncing to check every 15 minutes while the dashboard is running.</p>
+      <h2>How updates work</h2>
+      <ul>
+        <li>Job-Agent checks recent emails that mention application, interview, offer, or recruiter activity.</li>
+        <li>Only explicit application-status wording is considered for updates.</li>
+        <li>High-confidence company-and-role matches can update the tracker automatically.</li>
+        <li>Ambiguous or unmatched emails appear in Email review queue, where you choose the tracked job before approving the update.</li>
+        <li>Only message metadata and a short preview are stored; full message bodies are processed in memory and not saved.</li>
+      </ul>
+      <div class="guide-warning"><strong>Google OAuth testing note:</strong> external apps left in Testing can have refresh tokens expire after seven days when using Gmail scopes. If Gmail stops syncing, reconnect in the dashboard. Do not publish this personal OAuth client as a public application without reviewing Google's verification and data-use requirements.</div>
+      <h2>Disconnect</h2>
+      <p>Use Disconnect in the dashboard to remove the saved local token and disable automatic sync. To revoke the Google grant as well, remove Job-Agent from your <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">Google Account connections</a>.</p>
+      <p>Official references: <a href="https://developers.google.com/workspace/gmail/api/quickstart/python" target="_blank" rel="noopener noreferrer">Gmail API Python quickstart</a> · <a href="https://developers.google.com/workspace/gmail/api/auth/scopes" target="_blank" rel="noopener noreferrer">Gmail API scopes</a>.</p>
+    </section>
+  </main>
+</body>
+</html>
