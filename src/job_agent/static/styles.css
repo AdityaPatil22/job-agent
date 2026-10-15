@@ -205,3 +205,62 @@ th:first-child, td:first-child { padding-left: 16px; }
   table { min-width: 1120px; }
 }
 
+/* Gmail connection and review queue */
+.gmail-integration { margin: 0 0 24px; padding: 18px 20px; }
+.gmail-heading { align-items: flex-start; margin-bottom: 16px; }
+.gmail-heading h2 { flex-wrap: wrap; }
+.gmail-status { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: 999px; font-size: 10px; line-height: 1.4; font-weight: 750; letter-spacing: 0; white-space: nowrap; }
+.gmail-status.status-connected { color: #176b43; background: #eaf7ef; }
+.gmail-status.status-disconnected { color: #667085; background: #f2f4f7; }
+.gmail-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.gmail-details { display: grid; grid-template-columns: minmax(140px,1fr) minmax(160px,1fr) minmax(250px,1.5fr); gap: 12px; padding: 13px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.gmail-account-detail { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.detail-label { color: var(--muted); font-size: 11px; font-weight: 600; }
+.gmail-account-detail strong { overflow-wrap: anywhere; font-size: 12px; font-weight: 650; }
+.gmail-auto-toggle { display: flex; align-items: flex-start; gap: 9px; cursor: pointer; }
+.gmail-auto-toggle input { flex: 0 0 auto; min-height: auto; margin: 3px 0 0; accent-color: var(--accent); }
+.gmail-auto-toggle span { display: flex; flex-direction: column; gap: 2px; }
+.gmail-auto-toggle strong { font-size: 12px; }
+.gmail-auto-toggle small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.gmail-setup-help { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; padding: 11px 12px; border: 1px solid #dce4ff; border-radius: 7px; background: #f7f8ff; color: #344054; font-size: 12px; }
+.gmail-setup-help strong { font-size: 12px; }
+.gmail-setup-help code { color: #294cb6; font-size: 11px; overflow-wrap: anywhere; }
+.gmail-setup-help a { width: fit-content; color: var(--accent); font-weight: 650; text-decoration: underline; text-underline-offset: 2px; }
+.gmail-privacy-note { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
+.gmail-review-section { margin: 0 0 26px; }
+.gmail-review-list { display: grid; gap: 10px; }
+.email-review-card { min-width: 0; padding: 15px 16px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.email-review-card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.email-review-subject { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.email-review-subject strong { overflow-wrap: anywhere; font-size: 13px; }
+.email-review-meta { overflow-wrap: anywhere; color: var(--muted); font-size: 11px; }
+.email-review-summary { margin: 10px 0 0; color: #475467; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.email-review-reason { margin: 7px 0 0; color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
+.email-review-controls { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; margin-top: 13px; padding-top: 12px; border-top: 1px solid #f0f1f3; }
+.email-review-job-label { display: flex; flex: 1 1 300px; min-width: 0; flex-direction: column; gap: 5px; color: #475467; font-size: 11px; font-weight: 650; }
+.email-review-job-select { width: 100%; min-height: 36px; }
+.email-review-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.button-small { min-height: 32px; padding: 0 10px; font-size: 11px; }
+.status-offer { background: #fff6df; color: #805400; }
+#gmail-review-empty { margin-bottom: 10px; }
+#gmail-review-empty[hidden] { display: none !important; }
+@media (max-width: 900px) {
+  .gmail-heading { flex-direction: column; }
+  .gmail-actions { justify-content: flex-start; }
+  .gmail-details { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .gmail-auto-toggle { grid-column: 1 / -1; }
+}
+@media (max-width: 620px) {
+  .gmail-integration { padding: 15px; }
+  .gmail-details { grid-template-columns: 1fr; gap: 11px; }
+  .gmail-auto-toggle { grid-column: auto; }
+  .gmail-actions { width: 100%; }
+  .gmail-actions .button { flex: 1 1 auto; }
+  .gmail-review-section .section-heading { align-items: flex-start; }
+  .email-review-card { padding: 13px; }
+  .email-review-card-header { flex-direction: column; }
+  .email-review-controls { flex-direction: column; align-items: stretch; }
+  .email-review-job-label { flex-basis: auto; }
+  .email-review-actions { justify-content: flex-start; }
+}
+
