@@ -178,7 +178,7 @@ async function loadEmailStatus() {
     $('#gmail-account').textContent = status.account || 'Not connected';
     $('#gmail-last-sync').textContent = dateTime(status.last_sync_at);
     $('#gmail-auto-sync').checked = Boolean(status.auto_sync);
-    $('#gmail-auto-sync').disabled = !status.connected;
+    $('#gmail-auto-sync').disabled = !status.connected || !status.available;
     $('#gmail-connect-button').hidden = Boolean(status.connected);
     $('#gmail-sync-button').disabled = !status.connected || !status.available;
     $('#gmail-disconnect-button').hidden = !status.connected;
