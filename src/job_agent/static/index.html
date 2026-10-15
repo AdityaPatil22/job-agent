@@ -44,8 +44,9 @@
     <section id="applications" class="applications-section">
       <div class="section-heading">
         <div><h2>Applications <span id="jobs-count" class="count-chip">0</span></h2><p>Keep track of each role and what needs to happen next.</p></div>
-        <button id="export-button" class="button button-secondary" type="button">Export CSV</button>
+        <div class="table-actions"><button id="import-button" class="button button-secondary" type="button">Import CSV</button><button id="export-button" class="button button-secondary" type="button">Export CSV</button><input id="csv-file-input" type="file" accept=".csv,text/csv" hidden></div>
       </div>
+      <div class="tracker-toolbar"><span id="last-updated" class="sync-indicator"><span class="online-dot"></span> Synced with local database</span><span class="toolbar-hint">CSV import merges by job URL · existing records are updated</span></div>
       <div class="filters panel">
         <label class="search-box"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Search company, role or location…" aria-label="Search applications"></label>
         <label class="filter-select-label"><span>Status</span><select id="status-filter" aria-label="Filter by status">
@@ -73,7 +74,7 @@
       </div>
       <p class="field-hint">If a task asks for input, respond in the terminal running this dashboard. Job-Agent never submits an application automatically.</p>
     </section>
-    <footer class="page-footer"><span>Job-Agent · Local-first application tracking</span><span>Python · Playwright · SQLite</span></footer>
+    <footer class="page-footer"><span>Job-Agent · Local-first application tracking</span><span>SQLite · Auto-backup before CSV import</span></footer>
   </main>
 
   <dialog id="edit-dialog" class="apply-dialog">
