@@ -31,6 +31,9 @@ jobs:
       - name: Install Chromium for form tests
         run: python -m playwright install --with-deps chromium
 
+      - name: Check dashboard JavaScript syntax
+        run: node --check src/job_agent/static/app.js
+
       - name: Compile Python files
         run: python -m compileall -q src tests
 
