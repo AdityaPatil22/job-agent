@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = (selector) => document.querySelector(selector);
-const state = { jobs: [], resumes: [], taskId: null, taskPoller: null, lastSyncedAt: null };
+const state = { jobs: [], resumes: [], taskId: null, taskPoller: null, lastSyncedAt: null, gmailConnected: false };
 const STATUS_LABELS = {
   discovered: 'Discovered', shortlisted: 'Shortlisted', ready: 'Ready to review',
   applied: 'Applied', interview: 'Interview', offer: 'Offer', rejected: 'Rejected', withdrawn: 'Withdrawn',
@@ -172,6 +172,7 @@ async function loadEmailStatus() {
   try {
     const status = await api('/api/email/status');
     const badge = $('#gmail-status');
+    state.gmailConnected = Boolean(status.connected);
     badge.textContent = !status.available ? 'Gmail extra needed' : (status.connected ? 'Connected' : 'Not connected');
     badge.className = `gmail-status ${status.connected ? 'status-connected' : 'status-disconnected'}`;
     $('#gmail-account').textContent = status.account || 'Not connected';
