@@ -207,7 +207,9 @@ function renderEmailReview(payload) {
     }
     card.append(header);
     if (item.summary) card.append(element('p', 'email-review-summary', item.summary));
-    card.append(element('p', 'email-review-reason', item.reason || 'This email needs confirmation.'));
+    const confidence = Number(item.confidence || 0);
+    const confidenceText = Number.isFinite(confidence) ? `${Math.round(confidence * 100)}% match confidence · ` : '';
+    card.append(element('p', 'email-review-reason', confidenceText + (item.reason || 'This email needs confirmation.')));
     const controls = element('div', 'email-review-controls');
     const selectLabel = element('label', 'email-review-job-label', 'Match to job');
     const select = document.createElement('select');
@@ -550,6 +552,11 @@ $('#gmail-review-refresh').addEventListener('click', async () => {
 });
 async function init() {
   await Promise.all([loadJobs(), loadResumes(), loadEmailStatus(), loadEmailReview()]);
+  // The scheduler runs in the local server process, so refresh the UI periodically even
+  // when no foreground CLI task is polling for output.
+  window.setInterval(() => {
+    Promise.all([loadJobs(), loadEmailStatus(), loadEmailReview()]);
+  }, 60_000);
   try {
     const payload = await api('/api/tasks');
     if (payload.latest) {
