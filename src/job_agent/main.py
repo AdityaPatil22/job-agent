@@ -26,7 +26,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RESUMES_DIR = PROJECT_ROOT / "resumes"
 VALID_STATUS_CHOICES = (
     "discovered", "shortlisted", "ready", "applied",
-    "interview", "rejected", "withdrawn",
+    "interview", "offer", "rejected", "withdrawn",
 )
 
 
