@@ -43,10 +43,12 @@ job-agent/
 │       ├── browser.py       # Playwright browser session management
 │       ├── autofill.py      # Form detection and field filling
 │       ├── job_parser.py    # Parse job details from URLs
+│       ├── urls.py          # Canonical job URL normalization
 │       └── models.py        # Pydantic data models
 ├── tests/
 │   ├── test_database.py     # SQLite operations
 │   ├── test_autofill.py     # Form field detection
+│   ├── test_dashboard.py    # CSV, backup and URL regressions
 │   └── test_parser.py       # Job page parsing
 ├── .gitignore
 └── .env.example             # Template for local secrets
@@ -58,7 +60,8 @@ job-agent/
    ```bash
    python3 -m venv .venv
    source .venv/bin/activate
-   pip install -r pyproject.toml
+   python -m pip install -e ".[dev]"
+   python -m playwright install chromium
    ```
 
 2. **Set up configuration**
@@ -100,9 +103,9 @@ See `PLAN.md` for full architecture and implementation details.
 - Multi-page form handling
 
 **Out of scope (future):**
-- Job discovery automation, intelligent filtering
-- Referral workflow, cold DM generation
-- Web dashboard, scheduled execution
+- Job discovery automation and intelligent filtering
+- Referral workflow and cold outreach generation
+- Scheduled execution and notifications
 
 ## Implementation milestones
 
@@ -113,3 +116,32 @@ See `PLAN.md` for full architecture and implementation details.
 5. **Testing & refinement**: Unit tests, integration tests, real applications
 
 See `PLAN.md` for detailed implementation plan, success criteria, and risk mitigations.
+
+
+## Data safety and recovery
+
+- The dashboard binds to loopback by default and is intended for local use only.
+- Candidate profile data, local browser state, the SQLite database, and resume files should remain local. Do not commit personal data or exported application CSVs.
+- Job URLs are normalized across common differences such as host casing, trailing slashes, fragments, and tracking parameters. Job-identifying query parameters are retained.
+- CSV import validates all rows before writing, merges rows by normalized URL, and treats blank optional fields as "keep the existing value." Rows absent from an import are never deleted.
+- Before importing into an existing database, Job-Agent creates a SQLite-native snapshot in \`data/backups/\`. CSV exports prefix potentially executable spreadsheet cells to reduce formula-injection risk.
+
+To restore a snapshot, first stop the dashboard and make a copy of the current database. Then replace it with the chosen backup file:
+
+\`\`\`bash
+cp data/jobs.db data/jobs.db.before-restore
+cp data/backups/<backup-file>.db data/jobs.db
+\`\`\`
+
+Keep the pre-restore copy until the dashboard opens and your records look correct. CSV exports are also useful for portability, but they are not a substitute for a database backup.
+
+## Tests
+
+Install the development dependencies and Chromium as shown above, then run:
+
+\`\`\`bash
+python -m compileall -q src tests
+python -m pytest -q
+\`\`\`
+
+GitHub Actions runs the compile and test steps for pushes and pull requests. Browser tests use a local test page and do not submit real applications.
