@@ -663,9 +663,10 @@ def list_review_events(
     with _connect(db_path) as connection:
         rows = connection.execute(
             """SELECT e.*, j.company AS job_company, j.title AS job_title, j.url AS job_url,
-                      j.status AS current_status
+                      COALESCE(a.status, 'discovered') AS current_status
                FROM email_events e
                LEFT JOIN jobs j ON j.id=e.job_id
+               LEFT JOIN applications a ON a.job_id=j.id
                WHERE e.disposition='needs_review'
                ORDER BY e.received_at DESC LIMIT ?""",
             (max(1, min(limit, 200)),),
