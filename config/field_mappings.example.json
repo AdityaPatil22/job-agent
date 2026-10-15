@@ -63,13 +63,15 @@
     "linkedin url",
     "linkedin profile",
     "linkedin profile url",
+    "linkedin profile link",
     "linkedin link"
   ],
   "github": [
     "github",
     "github url",
     "github profile",
-    "github profile url"
+    "github profile url",
+    "github profile link"
   ],
   "portfolio": [
     "portfolio",
@@ -118,8 +120,10 @@
   ],
   "current_company": [
     "company",
+    "company name",
     "current company",
     "current employer",
+    "most recent employer",
     "employer",
     "organization",
     "organisation",
@@ -129,6 +133,7 @@
     "title",
     "job title",
     "current title",
+    "current job title",
     "current position",
     "position",
     "designation",
@@ -139,12 +144,15 @@
     "employment type",
     "job type",
     "work type",
+    "work arrangement",
     "contract type"
   ],
   "years_experience": [
     "years of experience",
     "total experience",
     "professional experience",
+    "total professional experience",
+    "total years of work experience",
     "years of work experience"
   ],
   "education_school": [
