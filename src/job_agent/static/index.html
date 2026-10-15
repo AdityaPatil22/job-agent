@@ -62,7 +62,7 @@
       <div id="gmail-setup-help" class="gmail-setup-help">
         <strong>One-time setup</strong>
         <span>Install the Gmail extra with <code>python -m pip install -e ".[gmail]"</code>, enable the Gmail API in Google Cloud, create a Desktop OAuth client, and save its JSON as <code>config/gmail-credentials.json</code>. Then select Connect Gmail.</span>
-        <a href="/docs/gmail-setup" id="gmail-setup-link">Gmail setup guide</a>
+        <a href="/gmail-setup.html" id="gmail-setup-link">Gmail setup guide</a>
       </div>
       <p class="gmail-privacy-note">Only recent email metadata and a short preview are stored locally. Full email bodies are processed in memory. High-confidence matches update automatically; uncertain matches wait for your review. Gmail itself is never changed.</p>
     </section>
@@ -121,7 +121,7 @@
         <label>Role <input id="edit-title" name="title" required maxlength="300"></label>
         <label class="field-wide">Job URL <input id="edit-url" name="url" type="url" required placeholder="https://…"></label>
         <label>Location <input id="edit-location" name="location" maxlength="200"></label>
-        <label>Status <select id="edit-status" name="status"><option value="discovered">Discovered</option><option value="shortlisted">Shortlisted</option><option value="ready">Ready to review</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option></select></label>
+        <label>Status <select id="edit-status" name="status"><option value="discovered">Discovered</option><option value="shortlisted">Shortlisted</option><option value="ready">Ready to review</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option></select></label>
         <label>Applied on <input id="edit-applied-date" name="applied_date" type="date"></label>
         <label>Next follow-up <input id="edit-next-action" name="next_action" type="date"></label>
         <label class="field-wide">Resume used <input id="edit-resume" name="resume_used" maxlength="250" placeholder="e.g. ai-engineer.pdf"></label>
