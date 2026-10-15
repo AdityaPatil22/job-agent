@@ -48,8 +48,9 @@ def normalize_job_url(value: str) -> str:
         normalized_key = key.casefold()
         if normalized_key.startswith("utm_") or normalized_key in _TRACKING_QUERY_KEYS:
             continue
+        # Preserve meaningful parameter order and duplicate keys; some URLs are signed
+        # and some applications assign meaning to repeated query parameters.
         query_pairs.append((key, item))
-    query_pairs.sort(key=lambda pair: (pair[0].casefold(), pair[0], pair[1]))
 
     # Fragments are browser-only and do not identify a distinct server-side job.
     return urlunsplit((scheme, netloc, path, urlencode(query_pairs, doseq=True), ""))
