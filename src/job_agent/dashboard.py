@@ -34,7 +34,7 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 RESUMES_DIR = PROJECT_ROOT / "resumes"
 VALID_STATUSES = {
     "discovered", "shortlisted", "ready", "applied",
-    "interview", "rejected", "withdrawn",
+    "interview", "offer", "rejected", "withdrawn",
 }
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_OUTPUT_CHARS = 80_000
