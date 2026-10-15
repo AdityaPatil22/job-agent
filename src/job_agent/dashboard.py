@@ -45,8 +45,8 @@ def _safe_csv_value(value: Any) -> Any:
     """Prevent spreadsheet formula execution when exported text is opened in a spreadsheet."""
     if not isinstance(value, str):
         return value
-    stripped = value.lstrip(" \\t\\r\\n")
-    if value.startswith(("\\t", "\\r", "\\n")) or stripped.startswith(("=", "+", "-", "@")):
+    stripped = value.lstrip(" \t\r\n")
+    if value.startswith(("\t", "\r", "\n")) or stripped.startswith(("=", "+", "-", "@")):
         return "'" + value
     return value
 
@@ -328,7 +328,7 @@ def _import_csv_text(csv_text: str, db_path: str | Path | None = None) -> dict[s
     if len(csv_text.encode("utf-8")) > 5 * 1024 * 1024:
         raise ValueError("CSV file is too large (maximum 5 MB).")
     # Spreadsheet tools commonly export a UTF-8 BOM. Remove it before parsing the first header.
-    csv_text = csv_text.lstrip("\\ufeff")
+    csv_text = csv_text.lstrip("\ufeff")
     seen_urls: set[str] = set()
     try:
         reader = csv.DictReader(io.StringIO(csv_text, newline=""))
