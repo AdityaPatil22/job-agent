@@ -684,10 +684,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json({"disconnected": True})
                 return
             if path == "/api/email/auto-sync":
-                from .gmail_sync import GmailIntegrationError, is_connected, set_auto_sync
+                from .gmail_sync import GmailIntegrationError, get_status, is_connected, set_auto_sync
                 enabled = payload.get("enabled")
                 if not isinstance(enabled, bool):
                     raise ValueError("enabled must be true or false.")
+                if enabled and not get_status()["available"]:
+                    raise ValueError('Install Gmail dependencies with: python -m pip install -e ".[gmail]"')
                 if enabled and not is_connected():
                     raise ValueError("Connect Gmail before enabling automatic sync.")
                 set_auto_sync(enabled)
