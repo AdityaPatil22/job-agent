@@ -227,7 +227,7 @@ def _update_job(job_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
         if not isinstance(value, str):
             raise ValueError(f"{key} must be text.")
         job_fields[key] = value.strip()
-    if not job_fields.get("company", "ok") or not job_fields.get("title", "ok"):
+    if ("company" in job_fields and not job_fields["company"]) or ("title" in job_fields and not job_fields["title"]):
         raise ValueError("Company and role cannot be empty.")
     if "url" in job_fields:
         parsed = urlsplit(job_fields["url"])
