@@ -597,6 +597,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         static_files = {
             "/": ("index.html", "text/html; charset=utf-8"),
+            "/gmail-setup.html": ("gmail-setup.html", "text/html; charset=utf-8"),
             "/index.html": ("index.html", "text/html; charset=utf-8"),
             "/styles.css": ("styles.css", "text/css; charset=utf-8"),
             "/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -823,9 +824,10 @@ def serve(host: str = "127.0.0.1", port: int = 8765) -> None:
     init_db()
     server = ThreadingHTTPServer((host, port), DashboardHandler)
     scheduler_stop = threading.Event()
+    from .gmail_sync import run_auto_sync_scheduler
     scheduler = threading.Thread(
-        target=lambda: __import__("job_agent.gmail_sync", fromlist=["run_auto_sync_scheduler"])
-        .run_auto_sync_scheduler(scheduler_stop),
+        target=run_auto_sync_scheduler,
+        args=(scheduler_stop,),
         daemon=True,
         name="job-agent-gmail-auto-sync",
     )
