@@ -130,6 +130,21 @@ See `PLAN.md` for full architecture and implementation details.
 See `PLAN.md` for detailed implementation plan, success criteria, and risk mitigations.
 
 
+## Gmail integration
+
+The dashboard can connect to Gmail using a local OAuth Desktop client and the Gmail read-only scope. It can detect application confirmations, interview requests, rejection messages, and offers. High-confidence matches update the tracker; ambiguous messages appear in the dashboard review queue. The optional integration never sends or modifies mail.
+
+Install and configure it using [the Gmail setup guide](docs/gmail-setup.md), then run:
+
+```bash
+python -m pip install -e ".[gmail]"
+job-agent email-connect
+job-agent email-sync
+job-agent email-status
+```
+
+Automatic syncing can be enabled in the dashboard and runs every 15 minutes while it stays open. OAuth credentials and tokens remain local and are ignored by Git.
+
 ## Data safety and recovery
 
 - The dashboard binds to loopback by default and is intended for local use only.
