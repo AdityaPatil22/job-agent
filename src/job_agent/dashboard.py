@@ -24,9 +24,10 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from .database import DEFAULT_DB_PATH, get_job, init_db, list_jobs
+from .urls import normalize_job_url as _normalize_job_url
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -38,46 +39,6 @@ VALID_STATUSES = {
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_OUTPUT_CHARS = 80_000
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-
-
-TRACKING_QUERY_KEYS = {
-    "fbclid", "gclid", "dclid", "mc_cid", "mc_eid", "gh_src", "trk",
-    "trackingid", "ref_src", "_ga",
-}
-
-
-def _normalize_job_url(value: str) -> str:
-    """Normalize common URL variants without discarding job-identifying query parameters."""
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError("A job URL is required.")
-    parsed = urlsplit(value.strip())
-    scheme = parsed.scheme.lower()
-    try:
-        hostname = parsed.hostname
-        port = parsed.port
-    except ValueError as exc:
-        raise ValueError("Use a valid http:// or https:// job URL.") from exc
-    if scheme not in {"http", "https"} or not hostname or parsed.username or parsed.password:
-        raise ValueError("Use a complete http:// or https:// job URL without embedded credentials.")
-
-    host = hostname.encode("idna").decode("ascii").lower()
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
-        port = None
-    netloc = host if port is None else f"{host}:{port}"
-
-    path = parsed.path or "/"
-    if path != "/":
-        path = path.rstrip("/") or "/"
-    query_pairs = []
-    for key, item in parse_qsl(parsed.query, keep_blank_values=True):
-        normalized_key = key.casefold()
-        if normalized_key.startswith("utm_") or normalized_key in TRACKING_QUERY_KEYS:
-            continue
-        query_pairs.append((key, item))
-    query_pairs.sort(key=lambda pair: (pair[0].casefold(), pair[0], pair[1]))
-    return urlunsplit((scheme, netloc, path, urlencode(query_pairs, doseq=True), ""))
 
 
 def _safe_csv_value(value: Any) -> Any:
