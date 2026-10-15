@@ -16,7 +16,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "jobs.db"
 VALID_STATUSES = {
     "discovered", "shortlisted", "ready", "applied",
-    "interview", "rejected", "withdrawn",
+    "interview", "offer", "rejected", "withdrawn",
 }
 
 
