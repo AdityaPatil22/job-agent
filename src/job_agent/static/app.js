@@ -182,7 +182,7 @@ async function loadEmailStatus() {
     $('#gmail-connect-button').hidden = Boolean(status.connected);
     $('#gmail-sync-button').disabled = !status.connected || !status.available;
     $('#gmail-disconnect-button').hidden = !status.connected;
-    $('#gmail-setup-help').hidden = Boolean(status.connected) && Boolean(status.credentials_configured);
+    $('#gmail-setup-help').hidden = Boolean(status.connected) && Boolean(status.credentials_configured) && Boolean(status.available);
     $('#gmail-review-count').textContent = String(status.pending_review || 0);
   } catch (error) {
     toast(`Could not load Gmail status: ${error.message}`, 'error');
