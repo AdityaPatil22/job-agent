@@ -42,6 +42,40 @@
       </form>
     </section>
 
+    <section id="gmail-integration" class="gmail-integration panel">
+      <div class="section-heading gmail-heading">
+        <div>
+          <h2>Gmail integration <span id="gmail-status" class="gmail-status status-disconnected">Not connected</span></h2>
+          <p>Detect application emails and keep your tracker updated without granting permission to send, delete, or modify email.</p>
+        </div>
+        <div class="gmail-actions">
+          <button id="gmail-connect-button" class="button button-primary" type="button">Connect Gmail</button>
+          <button id="gmail-sync-button" class="button button-secondary" type="button" disabled>Sync now</button>
+          <button id="gmail-disconnect-button" class="button button-secondary" type="button" hidden>Disconnect</button>
+        </div>
+      </div>
+      <div class="gmail-details">
+        <div class="gmail-account-detail"><span class="detail-label">Account</span><strong id="gmail-account">Not connected</strong></div>
+        <div class="gmail-account-detail"><span class="detail-label">Last sync</span><strong id="gmail-last-sync">Never</strong></div>
+        <label class="gmail-auto-toggle"><input id="gmail-auto-sync" type="checkbox" disabled><span><strong>Automatic sync</strong><small>Check Gmail every 15 minutes while the dashboard is running.</small></span></label>
+      </div>
+      <div id="gmail-setup-help" class="gmail-setup-help">
+        <strong>One-time setup</strong>
+        <span>Install the Gmail extra with <code>python -m pip install -e ".[gmail]"</code>, enable the Gmail API in Google Cloud, create a Desktop OAuth client, and save its JSON as <code>config/gmail-credentials.json</code>. Then select Connect Gmail.</span>
+        <a href="/docs/gmail-setup" id="gmail-setup-link">Gmail setup guide</a>
+      </div>
+      <p class="gmail-privacy-note">Only recent email metadata and a short preview are stored locally. Full email bodies are processed in memory. High-confidence matches update automatically; uncertain matches wait for your review. Gmail itself is never changed.</p>
+    </section>
+
+    <section id="gmail-review-section" class="gmail-review-section">
+      <div class="section-heading">
+        <div><h2>Email review queue <span id="gmail-review-count" class="count-chip">0</span></h2><p>Confirm the correct job before applying an uncertain email update.</p></div>
+        <button id="gmail-review-refresh" class="button button-secondary" type="button">Refresh queue</button>
+      </div>
+      <div id="gmail-review-empty" class="empty-state panel"><h3>No emails need review</h3><p>Unmatched or ambiguous application emails will appear here after a sync.</p></div>
+      <div id="gmail-review-list" class="gmail-review-list"></div>
+    </section>
+
     <section id="applications" class="applications-section">
       <div class="section-heading">
         <div><h2>Applications <span id="jobs-count" class="count-chip">0</span></h2><p>Keep track of each role and what needs to happen next.</p></div>
@@ -51,7 +85,7 @@
       <div class="filters panel">
         <label class="search-box"><span aria-hidden="true">⌕</span><input id="search-input" type="search" placeholder="Search company, role or location…" aria-label="Search applications"></label>
         <label class="filter-select-label"><span>Status</span><select id="status-filter" aria-label="Filter by status">
-          <option value="all">All statuses</option><option value="discovered">Discovered</option><option value="shortlisted">Shortlisted</option><option value="ready">Ready to review</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option>
+          <option value="all">All statuses</option><option value="discovered">Discovered</option><option value="shortlisted">Shortlisted</option><option value="ready">Ready to review</option><option value="applied">Applied</option><option value="interview">Interview</option><option value="offer">Offer</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option>
         </select></label>
       </div>
       <div class="jobs-panel panel">
