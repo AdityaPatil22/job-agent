@@ -69,7 +69,7 @@ job-agent/
    job-agent start
    ```
 
-   The dashboard opens at `http://127.0.0.1:8765`. You can choose another port with
+   Open the dashboard at `http://127.0.0.1:8765` after the command starts. You can choose another port with
    `job-agent start --port 8877`. The server is local-only; it refuses non-loopback
    bind addresses. If the `job-agent` command is not found, activate your virtual
    environment and run `python -m pip install -e .` from the repository root.
@@ -91,17 +91,17 @@ job-agent/
 
 5. **Add a job**
    ```bash
-   python -m job_agent add-job https://career-page.com/job/123
+   job-agent add-job https://career-page.com/job/123
    ```
 
 6. **Apply to a job**
    ```bash
-   python -m job_agent apply --job-id 42 --resume ai-engineer
+   job-agent apply --job-id 42 --resume ai-engineer.pdf
    ```
 
 7. **Review applications**
    ```bash
-   python -m job_agent jobs --status applied
+   job-agent jobs --status applied
    ```
 
 ## MVP scope
