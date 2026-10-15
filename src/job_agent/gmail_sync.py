@@ -402,7 +402,7 @@ def match_email_to_job(
         company_norm = _text_normalized(company)
         company_tokens = _tokens(company)
         company_match = (
-            bool(company_norm and company_norm in normalized_content)
+            bool(company_norm and re.search(rf"\\b{re.escape(company_norm)}\\b", normalized_content))
             or bool(company_tokens and company_tokens.issubset(content_tokens))
         )
         domain_match = _domain_matches_company(sender, company)
