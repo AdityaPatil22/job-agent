@@ -8,6 +8,8 @@ can still be answered in the terminal.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import shlex
@@ -16,6 +18,7 @@ import subprocess
 import sys
 import threading
 import uuid
+import shutil
 from collections import deque
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -287,6 +290,114 @@ def _update_job(job_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
             )
     return next((item for item in list_jobs() if int(item["id"]) == job_id), None)
 
+
+CSV_FIELDS = ["id", "company", "title", "url", "location", "date_found", "status", "resume_used", "applied_date", "next_action", "notes"]
+CSV_ALIASES = {"role": "title", "applied_on": "applied_date", "follow_up": "next_action", "follow_up_date": "next_action"}
+
+
+def _export_csv_text() -> str:
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=CSV_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(list_jobs())
+    return output.getvalue()
+
+
+def _import_csv_text(csv_text: str) -> dict[str, Any]:
+    """Validate the complete CSV before merging it; create a SQLite backup first."""
+    if not isinstance(csv_text, str) or not csv_text.strip():
+        raise ValueError("Choose a non-empty CSV file.")
+    if len(csv_text.encode("utf-8")) > 5 * 1024 * 1024:
+        raise ValueError("CSV file is too large (maximum 5 MB).")
+    try:
+        reader = csv.DictReader(io.StringIO(csv_text))
+        if not reader.fieldnames:
+            raise ValueError("CSV must contain a header row.")
+        headers = {str(name).strip().lower() for name in reader.fieldnames if name}
+        if not {"company", "url"}.issubset(headers) or not ({"title", "role"} & headers):
+            raise ValueError("CSV needs company, title (or role), and url columns. Use Export CSV for a template.")
+        rows = []
+        for line_no, raw in enumerate(reader, start=2):
+            if not any((value or "").strip() for value in raw.values()):
+                continue
+            row = {}
+            for key, value in raw.items():
+                if key is None or not key.strip():
+                    continue
+                normalized = key.strip().lower()
+                normalized = CSV_ALIASES.get(normalized, normalized)
+                row[normalized] = (value or "").strip()
+            company, title, url = row.get("company", ""), row.get("title", ""), row.get("url", "")
+            parsed = urlsplit(url)
+            if not company or not title or parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError(f"Row {line_no}: company, role, and a complete http(s) URL are required.")
+            status = (row.get("status") or "discovered").lower().replace(" ", "_")
+            status_aliases = {"pending": "discovered", "interviewed": "interview", "ready_to_review": "ready"}
+            status = status_aliases.get(status, status)
+            if status not in VALID_STATUSES:
+                raise ValueError(f"Row {line_no}: unsupported status '{status}'.")
+            for date_field in ("date_found", "applied_date", "next_action"):
+                value = row.get(date_field, "")
+                if value:
+                    try:
+                        datetime.strptime(value, "%Y-%m-%d")
+                    except ValueError as exc:
+                        raise ValueError(f"Row {line_no}: {date_field} must use YYYY-MM-DD.") from exc
+            rows.append({
+                "company": company, "title": title, "url": url,
+                "location": row.get("location", ""), "description": row.get("description", ""),
+                "date_found": row.get("date_found") or datetime.now().date().isoformat(),
+                "status": status, "resume_used": row.get("resume_used", ""),
+                "applied_date": row.get("applied_date") or None,
+                "next_action": row.get("next_action") or None, "notes": row.get("notes", ""),
+            })
+    except csv.Error as exc:
+        raise ValueError(f"Could not parse CSV: {exc}") from exc
+    if not rows:
+        raise ValueError("CSV contains no application rows.")
+
+    init_db()
+    # Validate everything first, then make a restorable snapshot before touching the database.
+    backup_path = None
+    if DEFAULT_DB_PATH.exists():
+        backup_dir = DEFAULT_DB_PATH.parent / "backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+        backup_path = backup_dir / f"jobs-before-csv-import-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
+        shutil.copy2(DEFAULT_DB_PATH, backup_path)
+
+    inserted = updated = 0
+    with sqlite3.connect(DEFAULT_DB_PATH) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        for row in rows:
+            existing = connection.execute("SELECT id FROM jobs WHERE url = ?", (row["url"],)).fetchone()
+            if existing:
+                job_id = int(existing[0])
+                connection.execute(
+                    "UPDATE jobs SET company=?,title=?,location=?,description=?,date_found=? WHERE id=?",
+                    (row["company"], row["title"], row["location"], row["description"], row["date_found"], job_id),
+                )
+                updated += 1
+            else:
+                cursor = connection.execute(
+                    "INSERT INTO jobs (company,title,url,location,description,date_found) VALUES (?,?,?,?,?,?)",
+                    (row["company"], row["title"], row["url"], row["location"], row["description"], row["date_found"]),
+                )
+                job_id = int(cursor.lastrowid)
+                inserted += 1
+            connection.execute(
+                """INSERT INTO applications (job_id,status,resume_used,applied_date,next_action,notes,updated_at)
+                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET status=excluded.status,
+                   resume_used=excluded.resume_used,applied_date=excluded.applied_date,
+                   next_action=excluded.next_action,notes=excluded.notes,updated_at=excluded.updated_at""",
+                (job_id, row["status"], row["resume_used"], row["applied_date"], row["next_action"], row["notes"], _now()),
+            )
+        connection.execute(
+            "INSERT INTO activity_log (entity_id,event_type,timestamp,outcome) VALUES (0,?,?,?)",
+            ("csv_import", _now(), f"inserted={inserted}, updated={updated}"),
+        )
+    return {"inserted": inserted, "updated": updated, "total": len(rows), "backup": str(backup_path) if backup_path else None}
+
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "JobAgentDashboard/0.1"
 
@@ -352,6 +463,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         if path == "/api/jobs":
             self._json({"jobs": list_jobs()})
+            return
+        if path == "/api/export.csv":
+            body = _export_csv_text().encode("utf-8-sig")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/csv; charset=utf-8")
+            self.send_header("Content-Disposition", 'attachment; filename="job-applications.csv"')
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(body)
             return
         if path == "/api/resumes":
             self._json({"resumes": _get_resumes()})
@@ -439,6 +561,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             payload = self._read_json()
+            if path == "/api/import.csv":
+                result = _import_csv_text(payload.get("csv_text"))
+                self._json({"import": result, "jobs": list_jobs()})
+                return
             if path == "/api/actions/add-manual-job":
                 company = payload.get("company")
                 title = payload.get("title")
