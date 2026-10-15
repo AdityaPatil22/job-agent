@@ -13,8 +13,9 @@ import os
 import re
 import sqlite3
 import threading
-from datetime import date, datetime, timezone
-from email.utils import parseaddr
+import uuid
+from datetime import date, datetime, timedelta, timezone
+from email.utils import parseaddr, parsedate_to_datetime
 from html import unescape
 from pathlib import Path
 from typing import Any
@@ -35,15 +36,15 @@ AUTO_SYNC_INTERVAL_SECONDS = 15 * 60
 SYNC_LOCK = threading.Lock()
 
 STATUS_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("offer", (
-        r"\bpleased to offer\b", r"\bjob offer\b", r"\boffer letter\b",
-        r"\bemployment offer\b", r"\bformal offer\b",
-    )),
     ("rejected", (
         r"\bwe regret to inform\b", r"\bnot moving forward\b",
         r"\bwill not be moving forward\b", r"\bdecided not to move forward\b",
         r"\bother candidates\b", r"\bnot be proceeding\b",
         r"\bnot selected\b", r"\bunsuccessful in your application\b",
+    )),
+    ("offer", (
+        r"\bpleased to offer\b", r"\bjob offer\b", r"\boffer letter\b",
+        r"\bemployment offer\b", r"\bformal offer\b",
     )),
     ("interview", (
         r"\binterview\b", r"\bphone screen\b", r"\btechnical screen\b",
@@ -108,8 +109,43 @@ def _init_email_tables(db_path: str | Path | None = None) -> None:
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS gmail_sync_lock (
+                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+                owner TEXT NOT NULL,
+                acquired_at TEXT NOT NULL
+            );
             """
         )
+
+
+def _acquire_sync_lease(db_path: str | Path | None = None) -> str:
+    """Prevent the dashboard scheduler and a CLI sync process from racing each other."""
+    owner = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
+    with _connect(db_path) as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute(
+            "SELECT owner, acquired_at FROM gmail_sync_lock WHERE singleton=1"
+        ).fetchone()
+        if current:
+            try:
+                acquired_at = datetime.fromisoformat(str(current["acquired_at"]))
+                stale = now - acquired_at > timedelta(minutes=30)
+            except (TypeError, ValueError):
+                stale = True
+            if not stale:
+                raise GmailIntegrationError("A Gmail sync is already running in this Job-Agent database.")
+        connection.execute(
+            """INSERT INTO gmail_sync_lock(singleton,owner,acquired_at) VALUES(1,?,?)
+               ON CONFLICT(singleton) DO UPDATE SET owner=excluded.owner,acquired_at=excluded.acquired_at""",
+            (owner, now.isoformat()),
+        )
+    return owner
+
+
+def _release_sync_lease(owner: str, db_path: str | Path | None = None) -> None:
+    with _connect(db_path) as connection:
+        connection.execute("DELETE FROM gmail_sync_lock WHERE singleton=1 AND owner=?", (owner,))
 
 
 def _setting(key: str, default: str = "0", db_path: str | Path | None = None) -> str:
@@ -212,7 +248,6 @@ def get_status(db_path: str | Path | None = None) -> dict[str, Any]:
         "last_sync_at": str(last_row["value"]) if last_row else "",
         "pending_review": pending,
         "sync_interval_minutes": AUTO_SYNC_INTERVAL_SECONDS // 60,
-        "config_path": str(GMAIL_CONFIG_PATH),
     }
 
 
@@ -409,6 +444,29 @@ def match_email_to_job(
     }
 
 
+def _received_at(message: dict[str, Any], headers: dict[str, str]) -> str:
+    internal_ms = message.get("internalDate")
+    try:
+        return datetime.fromtimestamp(int(internal_ms) / 1000, tz=timezone.utc).isoformat()
+    except (TypeError, ValueError, OSError, OverflowError):
+        pass
+    try:
+        parsed = parsedate_to_datetime(headers.get("date", ""))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError):
+        return ""
+
+
+def _received_date(received_at: str) -> date | None:
+    try:
+        parsed = datetime.fromisoformat(received_at)
+        return parsed.astimezone().date()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _message_headers(message: dict[str, Any]) -> dict[str, str]:
     payload = message.get("payload", {}) or {}
     headers = payload.get("headers", []) or []
@@ -450,10 +508,12 @@ def sync_gmail(
         raise GmailIntegrationError(f"max_results must be between 1 and {MAX_MESSAGES_PER_SYNC}.")
     if not SYNC_LOCK.acquire(blocking=False):
         raise GmailIntegrationError("A Gmail sync is already running.")
+    lease_owner: str | None = None
     try:
         credentials, build, HttpError = _load_credentials()
         service = build("gmail", "v1", credentials=credentials, cache_discovery=False)
         _init_email_tables(db_path)
+        lease_owner = _acquire_sync_lease(db_path)
         jobs = list_jobs(db_path=db_path)
         with _connect(db_path) as connection:
             existing_ids = {
@@ -462,7 +522,8 @@ def sync_gmail(
         inserted = auto_updated = review_count = ignored = 0
         try:
             message_refs = _recent_message_ids(service, max_results)
-            # Gmail returns newest-first; process oldest-first so an older confirmation cannot overwrite a newer outcome on a first sync.
+            # Gmail returns newest-first; process oldest-first so an older confirmation cannot
+            # overwrite a newer outcome during a first sync.
             for message_ref in reversed(message_refs):
                 message_id = message_ref["id"]
                 if message_id in existing_ids:
@@ -481,47 +542,24 @@ def sync_gmail(
                 body = _plain_text(payload)
                 snippet_raw = str(message.get("snippet", ""))
                 status, status_reason = classify_email(subject, body, snippet_raw)
-                internal_ms = message.get("internalDate")
-                try:
-                    received_at = datetime.fromtimestamp(int(internal_ms) / 1000, tz=timezone.utc).isoformat()
-                except (TypeError, ValueError, OSError, OverflowError):
-                    received_at = headers.get("date", "")
+                received_at = _received_at(message, headers)
+                received_date = _received_date(received_at)
                 snippet = re.sub(r"\s+", " ", snippet_raw).strip()[:360]
                 match = match_email_to_job(subject, body + "\n" + snippet_raw, sender, jobs) if status else {
                     "job_id": None, "confidence": 0.0, "reason": status_reason
                 }
+                will_auto_update = bool(
+                    status is not None
+                    and match["job_id"] is not None
+                    and match["confidence"] >= 0.90
+                )
+                reason = f"{status_reason} {match['reason']}" if status else status_reason
+                initial_disposition = "needs_review" if status is not None else "ignored"
 
-                if status is None:
-                    disposition = "ignored"
-                    ignored += 1
-                    reason = status_reason
-                elif match["job_id"] is not None and match["confidence"] >= 0.90:
-                    disposition = "auto_applied"
-                    reason = f"{status_reason} {match['reason']}"
-                    try:
-                        update_application_status(
-                            int(match["job_id"]), status,
-                            applied_date=date.fromisoformat(received_at[:10]) if status == "applied" and received_at[:10] else None,
-                            notes=None,
-                            db_path=db_path,
-                        )
-                        record_activity(
-                            int(match["job_id"]), "gmail_status_update",
-                            f"Email detected status={status}; sender={sender[:180]}; subject={subject[:180]}",
-                            db_path=db_path,
-                        )
-                        auto_updated += 1
-                    except Exception as exc:
-                        disposition = "needs_review"
-                        reason = f"Automatic update failed: {exc}. {reason}"
-                        review_count += 1
-                else:
-                    disposition = "needs_review"
-                    reason = f"{status_reason} {match['reason']}"
-                    review_count += 1
-
+                # Persist message identity before updating a job. If the process stops after this
+                # point, the message remains visible for review instead of being auto-applied twice.
                 with _connect(db_path) as connection:
-                    connection.execute(
+                    cursor = connection.execute(
                         """INSERT OR IGNORE INTO email_events
                            (message_id,thread_id,subject,sender,received_at,summary,detected_status,
                             job_id,confidence,disposition,reason,processed_at)
@@ -530,11 +568,46 @@ def sync_gmail(
                             message_id, message_ref.get("threadId", ""),
                             subject[:500], sender[:500], received_at, snippet,
                             status, match.get("job_id"), float(match.get("confidence", 0)),
-                            disposition, reason[:1000], datetime.now(timezone.utc).isoformat(),
+                            initial_disposition, reason[:1000], datetime.now(timezone.utc).isoformat(),
                         ),
                     )
+                    if cursor.rowcount != 1:
+                        existing_ids.add(message_id)
+                        continue
                 existing_ids.add(message_id)
                 inserted += 1
+
+                if status is None:
+                    ignored += 1
+                    continue
+                if will_auto_update:
+                    try:
+                        update_application_status(
+                            int(match["job_id"]), status,
+                            applied_date=received_date if status == "applied" else None,
+                            notes=None,
+                            db_path=db_path,
+                        )
+                        record_activity(
+                            int(match["job_id"]), "gmail_status_update",
+                            f"Email detected status={status}; sender={sender[:180]}; subject={subject[:180]}",
+                            db_path=db_path,
+                        )
+                        final_disposition = "auto_applied"
+                        auto_updated += 1
+                    except Exception as exc:
+                        final_disposition = "needs_review"
+                        reason = f"Automatic update failed: {exc}. {reason}"
+                        review_count += 1
+                else:
+                    final_disposition = "needs_review"
+                    review_count += 1
+
+                with _connect(db_path) as connection:
+                    connection.execute(
+                        "UPDATE email_events SET disposition=?, reason=? WHERE message_id=?",
+                        (final_disposition, reason[:1000], message_id),
+                    )
         except HttpError as exc:
             raise GmailIntegrationError(
                 f"Gmail API request failed: {exc}. Check that the Gmail API is enabled and reconnect if needed."
@@ -564,6 +637,11 @@ def sync_gmail(
             "last_sync_at": now,
         }
     finally:
+        if lease_owner is not None:
+            try:
+                _release_sync_lease(lease_owner, db_path)
+            except Exception as exc:
+                print(f"[gmail] Could not release sync lock: {exc}", flush=True)
         SYNC_LOCK.release()
 
 
