@@ -62,6 +62,69 @@ def start_command(host: str, port: int) -> None:
         raise click.ClickException(f"Could not start dashboard: {exc}") from exc
 
 
+@cli.command("email-connect")
+def email_connect_command() -> None:
+    """Connect Gmail using Google's local OAuth flow with read-only mailbox access."""
+    from .gmail_sync import GmailIntegrationError, connect_gmail
+
+    try:
+        result = connect_gmail()
+    except GmailIntegrationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    account = result.get("account") or "Google account"
+    click.secho(f"Gmail connected for {account}. {result.get('message', '')}", fg="green")
+
+
+@cli.command("email-sync")
+@click.option("--limit", type=click.IntRange(min=1, max=200), default=200, show_default=True)
+def email_sync_command(limit: int) -> None:
+    """Check recent Gmail messages and update tracked application statuses."""
+    from .gmail_sync import GmailIntegrationError, sync_gmail
+
+    try:
+        result = sync_gmail(max_results=limit)
+    except GmailIntegrationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.secho(
+        "Gmail sync complete: "
+        f"{result['processed']} new messages processed, "
+        f"{result['auto_updated']} statuses updated, "
+        f"{result['needs_review']} need review, "
+        f"{result['ignored']} unrelated messages skipped.",
+        fg="green",
+    )
+
+
+@cli.command("email-status")
+def email_status_command() -> None:
+    """Show Gmail connection and automatic sync status."""
+    from .gmail_sync import get_status
+
+    status = get_status()
+    click.echo(f"Gmail dependencies installed: {'yes' if status['available'] else 'no'}")
+    click.echo(f"Connected: {'yes' if status['connected'] else 'no'}")
+    click.echo(f"Account: {status['account'] or 'Not connected'}")
+    click.echo(f"Automatic sync: {'on' if status['auto_sync'] else 'off'}")
+    click.echo(f"Last sync: {status['last_sync_at'] or 'Never'}")
+    click.echo(f"Emails awaiting review: {status['pending_review']}")
+
+
+@cli.command("email-disconnect")
+def email_disconnect_command() -> None:
+    """Remove the local Gmail token and turn off automatic sync."""
+    from .gmail_sync import GmailIntegrationError, disconnect_gmail
+
+    try:
+        disconnect_gmail()
+    except GmailIntegrationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    click.secho(
+        "Local Gmail credentials removed and automatic sync disabled. "
+        "To revoke the Google grant as well, remove Job-Agent from your Google Account's third-party connections.",
+        fg="yellow",
+    )
+
+
 @cli.command("add-job")
 @click.argument("url")
 def add_job_command(url: str) -> None:
