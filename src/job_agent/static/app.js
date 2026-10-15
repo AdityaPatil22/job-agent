@@ -29,6 +29,12 @@ function toast(message, kind = 'success') {
 function text(value, fallback = '—') {
   return value === null || value === undefined || String(value).trim() === '' ? fallback : String(value);
 }
+function localISODate() {
+  const now = new Date();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${now.getFullYear()}-${month}-${day}`;
+}
 function date(value) {
   if (!value) return '—';
   const parsed = new Date(`${value.slice(0, 10)}T12:00:00`);
@@ -49,6 +55,11 @@ function renderStats() {
   $('#stat-progress').textContent = jobs.filter((job) => ['discovered', 'shortlisted', 'ready'].includes(job.status)).length;
   $('#stat-applied').textContent = jobs.filter((job) => job.status === 'applied').length;
   $('#stat-interviews').textContent = jobs.filter((job) => job.status === 'interview').length;
+  const today = localISODate();
+  $('#stat-followups').textContent = jobs.filter((job) =>
+    job.next_action && job.next_action <= today &&
+    !['rejected', 'withdrawn'].includes(job.status)
+  ).length;
   $('#jobs-count').textContent = jobs.length;
   $('#last-updated').innerHTML = '<span class="online-dot"></span> Synced with local database · ' + (state.lastSyncedAt ? new Intl.DateTimeFormat(undefined, {hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(state.lastSyncedAt) : 'syncing');
 }
@@ -81,7 +92,7 @@ function createRow(job) {
   row.append(statusCell);
 
   const nextAction = element('td', 'date-cell', date(job.next_action));
-  if (job.next_action && job.next_action < new Date().toISOString().slice(0, 10) && !['rejected', 'withdrawn'].includes(job.status)) {
+  if (job.next_action && job.next_action < localISODate() && !['rejected', 'withdrawn'].includes(job.status)) {
     nextAction.append(element('span', 'overdue-label', 'Overdue'));
   }
   row.append(nextAction);
