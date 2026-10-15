@@ -327,7 +327,7 @@ def _text_normalized(value: str) -> str:
 
 
 def _sender_domain(sender: str) -> str:
-    _, address = email.utils.parseaddr(sender)
+    _, address = parseaddr(sender)
     return address.rsplit("@", 1)[-1].casefold() if "@" in address else ""
 
 
@@ -462,7 +462,8 @@ def sync_gmail(
         inserted = auto_updated = review_count = ignored = 0
         try:
             message_refs = _recent_message_ids(service, max_results)
-            for message_ref in message_refs:
+            # Gmail returns newest-first; process oldest-first so an older confirmation cannot overwrite a newer outcome on a first sync.
+            for message_ref in reversed(message_refs):
                 message_id = message_ref["id"]
                 if message_id in existing_ids:
                     continue
