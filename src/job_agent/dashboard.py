@@ -12,6 +12,7 @@ import csv
 import io
 import json
 import os
+import re
 import shlex
 import sqlite3
 import subprocess
@@ -23,7 +24,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .database import DEFAULT_DB_PATH, get_job, init_db, list_jobs
 
@@ -37,6 +38,56 @@ VALID_STATUSES = {
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_OUTPUT_CHARS = 80_000
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+TRACKING_QUERY_KEYS = {
+    "fbclid", "gclid", "dclid", "mc_cid", "mc_eid", "gh_src", "trk",
+    "trackingid", "ref_src", "_ga",
+}
+
+
+def _normalize_job_url(value: str) -> str:
+    """Normalize common URL variants without discarding job-identifying query parameters."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("A job URL is required.")
+    parsed = urlsplit(value.strip())
+    scheme = parsed.scheme.lower()
+    try:
+        hostname = parsed.hostname
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("Use a valid http:// or https:// job URL.") from exc
+    if scheme not in {"http", "https"} or not hostname or parsed.username or parsed.password:
+        raise ValueError("Use a complete http:// or https:// job URL without embedded credentials.")
+
+    host = hostname.encode("idna").decode("ascii").lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+        port = None
+    netloc = host if port is None else f"{host}:{port}"
+
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/") or "/"
+    query_pairs = []
+    for key, item in parse_qsl(parsed.query, keep_blank_values=True):
+        normalized_key = key.casefold()
+        if normalized_key.startswith("utm_") or normalized_key in TRACKING_QUERY_KEYS:
+            continue
+        query_pairs.append((key, item))
+    query_pairs.sort(key=lambda pair: (pair[0].casefold(), pair[0], pair[1]))
+    return urlunsplit((scheme, netloc, path, urlencode(query_pairs, doseq=True), ""))
+
+
+def _safe_csv_value(value: Any) -> Any:
+    """Prevent spreadsheet formula execution when exported text is opened in a spreadsheet."""
+    if not isinstance(value, str):
+        return value
+    stripped = value.lstrip(" \\t\\r\\n")
+    if value.startswith(("\\t", "\\r", "\\n")) or stripped.startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
 
 
 def _now() -> str:
@@ -232,9 +283,14 @@ def _update_job(job_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
     if ("company" in job_fields and not job_fields["company"]) or ("title" in job_fields and not job_fields["title"]):
         raise ValueError("Company and role cannot be empty.")
     if "url" in job_fields:
-        parsed = urlsplit(job_fields["url"])
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise ValueError("Use a complete http:// or https:// job URL.")
+        job_fields["url"] = _normalize_job_url(job_fields["url"])
+        for candidate in list_jobs():
+            if int(candidate["id"]) != job_id:
+                try:
+                    if _normalize_job_url(str(candidate["url"])) == job_fields["url"]:
+                        raise sqlite3.IntegrityError("That job URL is already tracked.")
+                except ValueError:
+                    continue
     if "status" in app_fields:
         status = app_fields["status"]
         if not isinstance(status, str) or status.lower() not in VALID_STATUSES:
@@ -294,105 +350,181 @@ CSV_FIELDS = ["id", "company", "title", "url", "location", "date_found", "status
 CSV_ALIASES = {"role": "title", "applied_on": "applied_date", "follow_up": "next_action", "follow_up_date": "next_action"}
 
 
-def _export_csv_text() -> str:
+def _export_csv_text(db_path: str | Path | None = None) -> str:
     output = io.StringIO(newline="")
     writer = csv.DictWriter(output, fieldnames=CSV_FIELDS, extrasaction="ignore")
     writer.writeheader()
-    writer.writerows(list_jobs())
+    for row in list_jobs(db_path=db_path):
+        # Apply to every exported cell so user-entered notes cannot run as a spreadsheet formula.
+        writer.writerow({key: _safe_csv_value(value) for key, value in row.items()})
     return output.getvalue()
 
 
-def _import_csv_text(csv_text: str) -> dict[str, Any]:
-    """Validate the complete CSV before merging it; create a SQLite backup first."""
+def _import_csv_text(csv_text: str, db_path: str | Path | None = None) -> dict[str, Any]:
+    """Validate the whole CSV, snapshot an existing database, then merge without resetting blanks."""
     if not isinstance(csv_text, str) or not csv_text.strip():
         raise ValueError("Choose a non-empty CSV file.")
     if len(csv_text.encode("utf-8")) > 5 * 1024 * 1024:
         raise ValueError("CSV file is too large (maximum 5 MB).")
+    # Spreadsheet tools commonly export a UTF-8 BOM. Remove it before parsing the first header.
+    csv_text = csv_text.lstrip("\\ufeff")
+    seen_urls: set[str] = set()
     try:
-        reader = csv.DictReader(io.StringIO(csv_text))
+        reader = csv.DictReader(io.StringIO(csv_text, newline=""))
         if not reader.fieldnames:
             raise ValueError("CSV must contain a header row.")
-        headers = {str(name).strip().lower() for name in reader.fieldnames if name}
-        if not {"company", "url"}.issubset(headers) or not ({"title", "role"} & headers):
+        normalized_headers = []
+        for name in reader.fieldnames:
+            if name is None or not name.strip():
+                raise ValueError("CSV contains an empty column name.")
+            normalized = CSV_ALIASES.get(name.strip().lower(), name.strip().lower())
+            normalized_headers.append(normalized)
+        if len(normalized_headers) != len(set(normalized_headers)):
+            raise ValueError("CSV contains duplicate columns after normalizing aliases.")
+        headers = set(normalized_headers)
+        if not {"company", "url"}.issubset(headers) or "title" not in headers:
             raise ValueError("CSV needs company, title (or role), and url columns. Use Export CSV for a template.")
-        rows = []
+
+        rows: list[dict[str, Any]] = []
+        header_map = dict(zip(reader.fieldnames, normalized_headers))
         for line_no, raw in enumerate(reader, start=2):
-            if not any((value or "").strip() for value in raw.values()):
+            if None in raw and any(str(value or "").strip() for value in raw[None]):
+                raise ValueError(f"Row {line_no}: contains more values than the header.")
+            if not any(str(value or "").strip() for key, value in raw.items() if key is not None):
                 continue
-            row = {}
-            for key, value in raw.items():
-                if key is None or not key.strip():
-                    continue
-                normalized = key.strip().lower()
-                normalized = CSV_ALIASES.get(normalized, normalized)
-                row[normalized] = (value or "").strip()
-            company, title, url = row.get("company", ""), row.get("title", ""), row.get("url", "")
-            parsed = urlsplit(url)
-            if not company or not title or parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                raise ValueError(f"Row {line_no}: company, role, and a complete http(s) URL are required.")
-            status = (row.get("status") or "discovered").lower().replace(" ", "_")
+            row = {
+                header_map[key]: (value or "").strip()
+                for key, value in raw.items()
+                if key is not None
+            }
+            company, title, raw_url = row.get("company", ""), row.get("title", ""), row.get("url", "")
+            if not company or not title:
+                raise ValueError(f"Row {line_no}: company and role are required.")
+            try:
+                url = _normalize_job_url(raw_url)
+            except ValueError as exc:
+                raise ValueError(f"Row {line_no}: {exc}") from exc
+            if url in seen_urls:
+                raise ValueError(f"Row {line_no}: this job URL appears more than once in the CSV.")
+            seen_urls.add(url)
+
+            status = (row.get("status") or "").lower().replace(" ", "_")
             status_aliases = {"pending": "discovered", "interviewed": "interview", "ready_to_review": "ready"}
-            status = status_aliases.get(status, status)
-            if status not in VALID_STATUSES:
+            status = status_aliases.get(status, status) if status else None
+            if status and status not in VALID_STATUSES:
                 raise ValueError(f"Row {line_no}: unsupported status '{status}'.")
+
+            parsed_dates: dict[str, str | None] = {}
             for date_field in ("date_found", "applied_date", "next_action"):
                 value = row.get(date_field, "")
-                if value:
-                    try:
-                        datetime.strptime(value, "%Y-%m-%d")
-                    except ValueError as exc:
-                        raise ValueError(f"Row {line_no}: {date_field} must use YYYY-MM-DD.") from exc
+                if not value:
+                    parsed_dates[date_field] = None
+                    continue
+                try:
+                    parsed = datetime.strptime(value, "%Y-%m-%d")
+                    if parsed.strftime("%Y-%m-%d") != value:
+                        raise ValueError
+                except ValueError as exc:
+                    raise ValueError(f"Row {line_no}: {date_field} must use YYYY-MM-DD.") from exc
+                parsed_dates[date_field] = value
+
             rows.append({
-                "company": company, "title": title, "url": url,
-                "location": row.get("location", ""), "description": row.get("description", ""),
-                "date_found": row.get("date_found") or datetime.now().date().isoformat(),
-                "status": status, "resume_used": row.get("resume_used", ""),
-                "applied_date": row.get("applied_date") or None,
-                "next_action": row.get("next_action") or None, "notes": row.get("notes", ""),
+                "company": company,
+                "title": title,
+                "url": url,
+                "location": row.get("location") or None,
+                "description": row.get("description") or None,
+                "date_found": parsed_dates["date_found"],
+                "status": status,
+                "resume_used": row.get("resume_used") or None,
+                "applied_date": parsed_dates["applied_date"],
+                "next_action": parsed_dates["next_action"],
+                "notes": row.get("notes") or None,
             })
     except csv.Error as exc:
         raise ValueError(f"Could not parse CSV: {exc}") from exc
     if not rows:
         raise ValueError("CSV contains no application rows.")
 
-    init_db()
-    # Validate everything first, then make a restorable snapshot before touching the database.
+    database_path = Path(db_path or DEFAULT_DB_PATH)
+    database_existed = database_path.exists()
+    init_db(database_path)
+
+    # SQLite's backup API includes committed WAL data. Microseconds prevent same-second
+    # imports from reusing a backup filename and replacing the previous recovery point.
     backup_path = None
-    if DEFAULT_DB_PATH.exists():
-        backup_dir = DEFAULT_DB_PATH.parent / "backups"
+    if database_existed:
+        backup_dir = database_path.parent / "backups"
         backup_dir.mkdir(parents=True, exist_ok=True)
-        backup_path = backup_dir / f"jobs-before-csv-import-{datetime.now().strftime('%Y%m%d-%H%M%S')}.db"
-        # SQLite's backup API includes committed WAL data, unlike copying the .db file.
-        with sqlite3.connect(DEFAULT_DB_PATH) as source, sqlite3.connect(backup_path) as backup:
+        backup_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+        backup_path = backup_dir / f"jobs-before-csv-import-{backup_stamp}.db"
+        with sqlite3.connect(database_path) as source, sqlite3.connect(backup_path) as backup:
             source.backup(backup)
 
+    existing_by_url: dict[str, dict[str, Any]] = {}
+    for existing_job in list_jobs(db_path=database_path):
+        try:
+            canonical = _normalize_job_url(str(existing_job["url"]))
+        except ValueError:
+            continue
+        existing_by_url.setdefault(canonical, existing_job)
+
     inserted = updated = 0
-    with sqlite3.connect(DEFAULT_DB_PATH) as connection:
+    with sqlite3.connect(database_path) as connection:
+        connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         connection.execute("BEGIN IMMEDIATE")
         for row in rows:
-            existing = connection.execute("SELECT id FROM jobs WHERE url = ?", (row["url"],)).fetchone()
-            if existing:
-                job_id = int(existing[0])
+            existing_job = existing_by_url.get(row["url"])
+            if existing_job:
+                job_id = int(existing_job["id"])
                 connection.execute(
-                    "UPDATE jobs SET company=?,title=?,location=?,description=?,date_found=? WHERE id=?",
-                    (row["company"], row["title"], row["location"], row["description"], row["date_found"], job_id),
+                    """UPDATE jobs SET company=?, title=?, location=?, description=?, date_found=?
+                       WHERE id=?""",
+                    (
+                        row["company"],
+                        row["title"],
+                        row["location"] if row["location"] is not None else existing_job.get("location", ""),
+                        row["description"] if row["description"] is not None else existing_job.get("description", ""),
+                        row["date_found"] or existing_job.get("date_found") or datetime.now().date().isoformat(),
+                        job_id,
+                    ),
                 )
+                old_app_row = connection.execute(
+                    "SELECT * FROM applications WHERE job_id=?", (job_id,)
+                ).fetchone()
+                old_app = dict(old_app_row) if old_app_row else {}
                 updated += 1
             else:
                 cursor = connection.execute(
-                    "INSERT INTO jobs (company,title,url,location,description,date_found) VALUES (?,?,?,?,?,?)",
-                    (row["company"], row["title"], row["url"], row["location"], row["description"], row["date_found"]),
+                    """INSERT INTO jobs (company,title,url,location,description,date_found)
+                       VALUES (?,?,?,?,?,?)""",
+                    (
+                        row["company"], row["title"], row["url"], row["location"] or "",
+                        row["description"] or "", row["date_found"] or datetime.now().date().isoformat(),
+                    ),
                 )
                 job_id = int(cursor.lastrowid)
+                old_app = {}
                 inserted += 1
+
+            merged_status = row["status"] or old_app.get("status", "discovered")
+            merged_resume = row["resume_used"] if row["resume_used"] is not None else old_app.get("resume_used", "")
+            merged_applied_date = row["applied_date"] if row["applied_date"] is not None else old_app.get("applied_date")
+            merged_next_action = row["next_action"] if row["next_action"] is not None else old_app.get("next_action")
+            merged_notes = row["notes"] if row["notes"] is not None else old_app.get("notes", "")
             connection.execute(
                 """INSERT INTO applications (job_id,status,resume_used,applied_date,next_action,notes,updated_at)
-                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET status=excluded.status,
-                   resume_used=excluded.resume_used,applied_date=excluded.applied_date,
-                   next_action=excluded.next_action,notes=excluded.notes,updated_at=excluded.updated_at""",
-                (job_id, row["status"], row["resume_used"], row["applied_date"], row["next_action"], row["notes"], _now()),
+                   VALUES (?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET
+                   status=excluded.status, resume_used=excluded.resume_used, applied_date=excluded.applied_date,
+                   next_action=excluded.next_action, notes=excluded.notes, updated_at=excluded.updated_at""",
+                (job_id, merged_status, merged_resume, merged_applied_date, merged_next_action, merged_notes, _now()),
             )
+            existing_by_url[row["url"]] = {
+                "id": job_id, "company": row["company"], "title": row["title"], "url": row["url"],
+                "location": row["location"] or "", "description": row["description"] or "",
+                "date_found": row["date_found"] or datetime.now().date().isoformat(),
+            }
         connection.execute(
             "INSERT INTO activity_log (entity_id,event_type,timestamp,outcome) VALUES (0,?,?,?)",
             ("csv_import", _now(), f"inserted={inserted}, updated={updated}"),
@@ -473,6 +605,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
             self.end_headers()
             self.wfile.write(body)
             return
@@ -580,9 +713,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 if parsed.scheme not in {"http", "https"} or not parsed.netloc:
                     raise ValueError("Use a complete http:// or https:// job URL.")
                 from datetime import date
-                from .database import add_job, get_job_by_url
-                clean_url = url.strip()
-                existing_job = get_job_by_url(clean_url)
+                from .database import add_job
+                clean_url = _normalize_job_url(url.strip())
+                existing_job = next(
+                    (item for item in list_jobs() if _normalize_job_url(str(item["url"])) == clean_url),
+                    None,
+                )
                 if existing_job:
                     job_id = int(existing_job["id"])
                     # Preserve the current URL and update details through the same validated CRUD helper.
