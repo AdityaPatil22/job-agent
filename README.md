@@ -64,30 +64,42 @@ job-agent/
    python -m playwright install chromium
    ```
 
-2. **Set up configuration**
+2. **Start the dashboard**
+   ```bash
+   job-agent start
+   ```
+
+   The dashboard opens at `http://127.0.0.1:8765`. You can choose another port with
+   `job-agent start --port 8877`. The server is local-only; it refuses non-loopback
+   bind addresses. If the `job-agent` command is not found, activate your virtual
+   environment and run `python -m pip install -e .` from the repository root.
+   The existing `./start-dashboard.sh` launcher remains supported.
+
+
+3. **Set up configuration**
    ```bash
    cp config/profile.example.json config/profile.json
    cp config/field_mappings.example.json config/field_mappings.json
    # Edit with your details
    ```
 
-3. **Add resumes**
+4. **Add resumes**
    ```bash
    cp your_resume.pdf resumes/ai-engineer.pdf
    cp your_other_resume.pdf resumes/infrastructure.pdf
    ```
 
-4. **Add a job**
+5. **Add a job**
    ```bash
    python -m job_agent add-job https://career-page.com/job/123
    ```
 
-5. **Apply to a job**
+6. **Apply to a job**
    ```bash
    python -m job_agent apply --job-id 42 --resume ai-engineer
    ```
 
-6. **Review applications**
+7. **Review applications**
    ```bash
    python -m job_agent jobs --status applied
    ```
