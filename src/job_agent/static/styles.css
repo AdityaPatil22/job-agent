@@ -147,3 +147,61 @@ thead th { position:sticky; top:0; z-index:1; }
   .toolbar-hint { text-align:left; }
 }
 @media(prefers-reduced-motion:reduce) { .stats-grid .stat-card,.toast { animation:none; transition:none; } }
+
+/* Table layout hardening: predictable columns, compact rows and safer overflow. */
+.jobs-panel { min-height: 0; }
+table {
+  table-layout: fixed;
+  min-width: 1120px;
+}
+th:nth-child(1), td:nth-child(1) { width: 5%; }
+th:nth-child(2), td:nth-child(2) { width: 24%; }
+th:nth-child(3), td:nth-child(3) { width: 11%; }
+th:nth-child(4), td:nth-child(4) { width: 17%; }
+th:nth-child(5), td:nth-child(5) { width: 12%; }
+th:nth-child(6), td:nth-child(6) { width: 12%; }
+th:nth-child(7), td:nth-child(7) { width: 19%; }
+
+th, td { overflow-wrap: break-word; }
+td { padding: 11px 10px; vertical-align: middle; }
+th { padding: 12px 10px; }
+th:first-child, td:first-child { padding-left: 16px; }
+.role-cell { min-width: 0; }
+.company-name, .role-title { overflow-wrap: anywhere; }
+.date-cell { white-space: nowrap; }
+.resume-cell { white-space: normal; overflow-wrap: anywhere; }
+.inline-status {
+  display: inline-block;
+  width: calc(100% - 66px);
+  min-width: 104px;
+  max-width: 145px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.status-badge {
+  display: inline-flex;
+  max-width: 100%;
+  margin: 0 0 0 4px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.inline-status:focus, .inline-status:hover {
+  border-color: #b8c6f8;
+  background: #fff;
+  box-shadow: none;
+}
+.actions-cell { min-width: 0; }
+.row-actions {
+  display: flex;
+  justify-content: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.action-link { flex: 0 0 auto; }
+.table-wrap { overscroll-behavior-x: contain; }
+@media (max-width: 1120px) {
+  .table-wrap { border-radius: 0 0 9px 9px; }
+  table { min-width: 1120px; }
+}
+
