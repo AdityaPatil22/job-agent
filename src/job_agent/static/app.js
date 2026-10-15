@@ -4,7 +4,7 @@ const $ = (selector) => document.querySelector(selector);
 const state = { jobs: [], resumes: [], taskId: null, taskPoller: null, lastSyncedAt: null };
 const STATUS_LABELS = {
   discovered: 'Discovered', shortlisted: 'Shortlisted', ready: 'Ready to review',
-  applied: 'Applied', interview: 'Interview', rejected: 'Rejected', withdrawn: 'Withdrawn',
+  applied: 'Applied', interview: 'Interview', offer: 'Offer', rejected: 'Rejected', withdrawn: 'Withdrawn',
 };
 const STATUS_OPTIONS = Object.keys(STATUS_LABELS);
 
@@ -39,6 +39,13 @@ function date(value) {
   if (!value) return '—';
   const parsed = new Date(`${value.slice(0, 10)}T12:00:00`);
   return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(parsed);
+}
+function dateTime(value) {
+  if (!value) return 'Never';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : new Intl.DateTimeFormat(undefined, {
+    month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit',
+  }).format(parsed);
 }
 function element(tag, className, value) {
   const node = document.createElement(tag);
@@ -161,6 +168,110 @@ async function loadResumes() {
   select.add(new Option(state.resumes.length ? 'Choose a resume…' : 'No resume files found', ''));
   state.resumes.forEach((resume) => select.add(new Option(resume, resume)));
 }
+async function loadEmailStatus() {
+  try {
+    const status = await api('/api/email/status');
+    const badge = $('#gmail-status');
+    badge.textContent = !status.available ? 'Gmail extra needed' : (status.connected ? 'Connected' : 'Not connected');
+    badge.className = `gmail-status ${status.connected ? 'status-connected' : 'status-disconnected'}`;
+    $('#gmail-account').textContent = status.account || 'Not connected';
+    $('#gmail-last-sync').textContent = dateTime(status.last_sync_at);
+    $('#gmail-auto-sync').checked = Boolean(status.auto_sync);
+    $('#gmail-auto-sync').disabled = !status.connected;
+    $('#gmail-connect-button').hidden = Boolean(status.connected);
+    $('#gmail-sync-button').disabled = !status.connected || !status.available;
+    $('#gmail-disconnect-button').hidden = !status.connected;
+    $('#gmail-setup-help').hidden = Boolean(status.connected) && Boolean(status.credentials_configured);
+    $('#gmail-review-count').textContent = String(status.pending_review || 0);
+  } catch (error) {
+    toast(`Could not load Gmail status: ${error.message}`, 'error');
+  }
+}
+function renderEmailReview(payload) {
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+  const list = $('#gmail-review-list');
+  list.replaceChildren();
+  $('#gmail-review-count').textContent = String(items.length);
+  $('#gmail-review-empty').hidden = items.length > 0;
+  items.forEach((item) => {
+    const card = element('article', 'email-review-card');
+    const header = element('div', 'email-review-card-header');
+    const heading = element('div', 'email-review-subject');
+    heading.append(element('strong', '', item.subject || '(No subject)'));
+    heading.append(element('span', 'email-review-meta', `${item.sender || 'Unknown sender'} · ${dateTime(item.received_at)}`));
+    header.append(heading);
+    if (item.detected_status) {
+      header.append(element('span', `status-badge status-${item.detected_status}`, STATUS_LABELS[item.detected_status] || item.detected_status));
+    }
+    card.append(header);
+    if (item.summary) card.append(element('p', 'email-review-summary', item.summary));
+    card.append(element('p', 'email-review-reason', item.reason || 'This email needs confirmation.'));
+    const controls = element('div', 'email-review-controls');
+    const selectLabel = element('label', 'email-review-job-label', 'Match to job');
+    const select = document.createElement('select');
+    select.className = 'email-review-job-select';
+    select.setAttribute('aria-label', 'Job to update for this email');
+    select.add(new Option('Choose a tracked job…', ''));
+    jobs.forEach((job) => {
+      const label = `#${job.id} · ${text(job.company, 'Unknown company')} — ${text(job.title, 'Untitled role')}`;
+      select.add(new Option(label, String(job.id), false, Number(job.id) === Number(item.job_id)));
+    });
+    selectLabel.append(select);
+    controls.append(selectLabel);
+    const actions = element('div', 'email-review-actions');
+    if (item.thread_id) {
+      const link = element('a', 'action-link', 'Open email ↗');
+      link.href = `https://mail.google.com/mail/u/0/#all/${encodeURIComponent(item.thread_id)}`;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      actions.append(link);
+    }
+    const approve = element('button', 'button button-primary button-small', 'Approve update');
+    approve.type = 'button';
+    approve.disabled = !item.detected_status;
+    approve.addEventListener('click', () => reviewEmail(item, 'approve', select.value, approve, card));
+    actions.append(approve);
+    const dismiss = element('button', 'button button-secondary button-small', 'Dismiss');
+    dismiss.type = 'button';
+    dismiss.addEventListener('click', () => reviewEmail(item, 'dismiss', '', dismiss, card));
+    actions.append(dismiss);
+    controls.append(actions);
+    card.append(controls);
+    list.append(card);
+  });
+}
+async function loadEmailReview() {
+  try {
+    const payload = await api('/api/email/review');
+    renderEmailReview(payload);
+  } catch (error) {
+    toast(`Could not load email review queue: ${error.message}`, 'error');
+  }
+}
+async function reviewEmail(item, action, selectedJobId, button, card) {
+  if (action === 'approve' && !selectedJobId) {
+    toast('Choose the job this email belongs to.', 'error');
+    return;
+  }
+  button.disabled = true;
+  try {
+    await api('/api/email/review', {
+      method: 'POST',
+      body: JSON.stringify({
+        message_id: item.message_id,
+        action,
+        ...(selectedJobId ? { job_id: Number(selectedJobId) } : {}),
+      }),
+    });
+    toast(action === 'approve' ? 'Application status updated from email.' : 'Email dismissed from review.');
+    card.remove();
+    await Promise.all([loadEmailStatus(), loadEmailReview(), loadJobs()]);
+  } catch (error) {
+    toast(error.message, 'error');
+    button.disabled = false;
+  }
+}
 function openEditDialog(job = null) {
   $('#edit-heading').textContent = job ? 'Edit application' : 'Add application manually';
   $('#edit-eyebrow').textContent = job ? `APPLICATION #${job.id}` : 'NEW APPLICATION';
@@ -239,7 +350,7 @@ async function monitorTask(taskId) {
         window.clearInterval(state.taskPoller);
         state.taskPoller = null;
         state.taskId = null;
-        await loadJobs();
+        await Promise.all([loadJobs(), loadEmailStatus(), loadEmailReview()]);
         toast(task.status === 'succeeded' ? `${task.label} completed.` : `${task.label} failed. Check command activity.`, task.status === 'succeeded' ? 'success' : 'error');
       }
     } catch (error) {
@@ -395,8 +506,49 @@ $('#csv-file-input').addEventListener('change', async (event) => {
   }
 });
 $('#clear-log-button').addEventListener('click', () => { $('#terminal-output').textContent = 'Output view cleared. The task continues if running.'; });
+$('#gmail-connect-button').addEventListener('click', async () => {
+  await startAction('/api/actions/email-connect', {}, 'Connect Gmail');
+});
+$('#gmail-sync-button').addEventListener('click', async () => {
+  await startAction('/api/actions/email-sync', {}, 'Sync Gmail');
+});
+$('#gmail-disconnect-button').addEventListener('click', async () => {
+  if (!window.confirm('Remove the saved Gmail token and turn off automatic sync? You can revoke Job-Agent fully from your Google Account security settings too.')) return;
+  const button = $('#gmail-disconnect-button');
+  button.disabled = true;
+  try {
+    await api('/api/actions/email-disconnect', { method: 'POST', body: JSON.stringify({}) });
+    toast('Gmail disconnected on this device.');
+    await Promise.all([loadEmailStatus(), loadEmailReview()]);
+  } catch (error) {
+    toast(error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+});
+$('#gmail-auto-sync').addEventListener('change', async (event) => {
+  const checkbox = event.currentTarget;
+  checkbox.disabled = true;
+  try {
+    await api('/api/email/auto-sync', {
+      method: 'POST',
+      body: JSON.stringify({ enabled: checkbox.checked }),
+    });
+    toast(checkbox.checked ? 'Automatic Gmail sync enabled.' : 'Automatic Gmail sync disabled.');
+  } catch (error) {
+    toast(error.message, 'error');
+    await loadEmailStatus();
+  } finally {
+    checkbox.disabled = !state.gmailConnected;
+    await loadEmailStatus();
+  }
+});
+$('#gmail-review-refresh').addEventListener('click', async () => {
+  await Promise.all([loadEmailStatus(), loadEmailReview()]);
+  toast('Email review queue refreshed.');
+});
 async function init() {
-  await Promise.all([loadJobs(), loadResumes()]);
+  await Promise.all([loadJobs(), loadResumes(), loadEmailStatus(), loadEmailReview()]);
   try {
     const payload = await api('/api/tasks');
     if (payload.latest) {
