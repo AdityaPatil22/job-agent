@@ -37,6 +37,31 @@ def cli() -> None:
     init_db()
 
 
+@cli.command("start")
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Local interface to bind the dashboard to. Non-loopback hosts are not allowed.",
+)
+@click.option(
+    "--port",
+    type=click.IntRange(min=1, max=65535),
+    default=8765,
+    show_default=True,
+    help="Port to serve the dashboard on.",
+)
+def start_command(host: str, port: int) -> None:
+    """Start the local web dashboard."""
+    # Import lazily so non-dashboard CLI commands do not load HTTP server code.
+    from .dashboard import serve
+
+    try:
+        serve(host=host, port=port)
+    except (OSError, ValueError) as exc:
+        raise click.ClickException(f"Could not start dashboard: {exc}") from exc
+
+
 @cli.command("add-job")
 @click.argument("url")
 def add_job_command(url: str) -> None:
