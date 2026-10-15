@@ -137,6 +137,24 @@ def test_review_dismiss_does_not_change_application(tmp_path: Path) -> None:
     assert get_application(job_id, db_path=database_path)["status"] == "discovered"
 
 
+def test_sync_lease_prevents_parallel_processes(tmp_path: Path) -> None:
+    database_path = tmp_path / "jobs.db"
+    gmail_sync._init_email_tables(database_path)
+    owner = gmail_sync._acquire_sync_lease(database_path)
+
+    try:
+        try:
+            gmail_sync._acquire_sync_lease(database_path)
+            assert False, "A second sync must not acquire the active lease"
+        except gmail_sync.GmailIntegrationError as exc:
+            assert "already running" in str(exc)
+    finally:
+        gmail_sync._release_sync_lease(owner, database_path)
+
+    next_owner = gmail_sync._acquire_sync_lease(database_path)
+    gmail_sync._release_sync_lease(next_owner, database_path)
+
+
 def test_disconnect_removes_local_token_and_disables_auto_sync(tmp_path: Path, monkeypatch) -> None:
     database_path = tmp_path / "jobs.db"
     token_path = tmp_path / "gmail" / "token.json"
