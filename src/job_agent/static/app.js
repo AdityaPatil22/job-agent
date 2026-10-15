@@ -1,7 +1,7 @@
 'use strict';
 
 const $ = (selector) => document.querySelector(selector);
-const state = { jobs: [], resumes: [], taskId: null, taskPoller: null };
+const state = { jobs: [], resumes: [], taskId: null, taskPoller: null, lastSyncedAt: null };
 const STATUS_LABELS = {
   discovered: 'Discovered', shortlisted: 'Shortlisted', ready: 'Ready to review',
   applied: 'Applied', interview: 'Interview', rejected: 'Rejected', withdrawn: 'Withdrawn',
@@ -50,6 +50,7 @@ function renderStats() {
   $('#stat-applied').textContent = jobs.filter((job) => job.status === 'applied').length;
   $('#stat-interviews').textContent = jobs.filter((job) => job.status === 'interview').length;
   $('#jobs-count').textContent = jobs.length;
+  $('#last-updated').innerHTML = '<span class="online-dot"></span> Synced with local database · ' + (state.lastSyncedAt ? new Intl.DateTimeFormat(undefined, {hour:'2-digit',minute:'2-digit',second:'2-digit'}).format(state.lastSyncedAt) : 'syncing');
 }
 function createRow(job) {
   const row = document.createElement('tr');
@@ -126,6 +127,7 @@ async function loadJobs() {
   try {
     const payload = await api('/api/jobs');
     state.jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+    state.lastSyncedAt = new Date();
     renderStats();
     renderJobs();
   } catch (error) {
@@ -327,7 +329,60 @@ $('#apply-dialog').addEventListener('click', (event) => { if (event.target === $
 $('#search-input').addEventListener('input', renderJobs);
 $('#status-filter').addEventListener('change', renderJobs);
 $('#refresh-button').addEventListener('click', async () => { await Promise.all([loadJobs(), loadResumes()]); toast('Tracker refreshed.'); });
-$('#export-button').addEventListener('click', () => startAction('/api/actions/export', {}, 'Export CSV'));
+$('#export-button').addEventListener('click', async () => {
+  const button = $('#export-button');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/export.csv', { cache: 'no-store' });
+    if (!response.ok) {
+      let payload = {};
+      try { payload = await response.json(); } catch {}
+      throw new Error(payload.error || 'CSV export failed.');
+    }
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = 'job-applications.csv';
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast(`Exported ${state.jobs.length} applications to CSV.`);
+  } catch (error) { toast(error.message, 'error'); }
+  finally { button.disabled = false; }
+});
+$('#import-button').addEventListener('click', () => $('#csv-file-input').click());
+$('#csv-file-input').addEventListener('change', async (event) => {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith('.csv')) {
+    toast('Choose a .csv file.', 'error');
+    event.target.value = '';
+    return;
+  }
+  if (file.size > 5 * 1024 * 1024) {
+    toast('CSV files must be 5 MB or smaller.', 'error');
+    event.target.value = '';
+    return;
+  }
+  const button = $('#import-button');
+  button.disabled = true;
+  button.textContent = 'Importing…';
+  try {
+    const csvText = await file.text();
+    if (!window.confirm(`Import ${file.name}?\n\nRows are matched by job URL. Matching applications will be updated; new URLs will be added. Applications not in this file will not be deleted. A database backup is created before changes.`)) return;
+    const result = await api('/api/import.csv', { method: 'POST', body: JSON.stringify({ csv_text: csvText }) });
+    await loadJobs();
+    const details = result.import || {};
+    toast(`Import complete: ${details.inserted || 0} added, ${details.updated || 0} updated. Backup saved.`);
+  } catch (error) { toast(`CSV import failed: ${error.message}`, 'error'); }
+  finally {
+    button.disabled = false;
+    button.textContent = 'Import CSV';
+    event.target.value = '';
+  }
+});
 $('#clear-log-button').addEventListener('click', () => { $('#terminal-output').textContent = 'Output view cleared. The task continues if running.'; });
 async function init() {
   await Promise.all([loadJobs(), loadResumes()]);
