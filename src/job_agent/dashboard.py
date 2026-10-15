@@ -216,6 +216,77 @@ def _delete_job(job_id: int) -> bool:
         return True
 
 
+
+def _update_job(job_id: int, payload: dict[str, Any]) -> dict[str, Any] | None:
+    """Update job fields and application metadata without changing the storage model."""
+    job_fields = {key: payload[key] for key in ("company", "title", "url", "location", "description") if key in payload}
+    app_fields = {key: payload[key] for key in ("status", "resume_used", "applied_date", "next_action", "notes") if key in payload}
+    if not job_fields and not app_fields:
+        raise ValueError("Provide at least one field to update.")
+    for key, value in job_fields.items():
+        if not isinstance(value, str):
+            raise ValueError(f"{key} must be text.")
+        job_fields[key] = value.strip()
+    if not job_fields.get("company", "ok") or not job_fields.get("title", "ok"):
+        raise ValueError("Company and role cannot be empty.")
+    if "url" in job_fields:
+        parsed = urlsplit(job_fields["url"])
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise ValueError("Use a complete http:// or https:// job URL.")
+    if "status" in app_fields:
+        status = app_fields["status"]
+        if not isinstance(status, str) or status.lower() not in VALID_STATUSES:
+            raise ValueError(f"Invalid status. Choose from: {', '.join(sorted(VALID_STATUSES))}.")
+        app_fields["status"] = status.lower()
+    for key in ("resume_used", "notes"):
+        if key in app_fields and not isinstance(app_fields[key], str):
+            raise ValueError(f"{key} must be text.")
+    for key in ("applied_date", "next_action"):
+        if key in app_fields:
+            value = app_fields[key]
+            if value in ("", None):
+                app_fields[key] = None
+            elif not isinstance(value, str):
+                raise ValueError(f"{key} must use YYYY-MM-DD format.")
+            else:
+                try:
+                    datetime.strptime(value, "%Y-%m-%d")
+                except ValueError as exc:
+                    raise ValueError(f"{key} must use YYYY-MM-DD format.") from exc
+
+    init_db()
+    with sqlite3.connect(DEFAULT_DB_PATH) as connection:
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+        if current is None:
+            return None
+        if job_fields:
+            assignments = ", ".join(f"{key} = ?" for key in job_fields)
+            connection.execute(f"UPDATE jobs SET {assignments} WHERE id = ?", [*job_fields.values(), job_id])
+        row = connection.execute("SELECT * FROM applications WHERE job_id = ?", (job_id,)).fetchone()
+        existing = dict(row) if row else {}
+        status = app_fields.get("status", existing.get("status", "discovered"))
+        resume = app_fields.get("resume_used", existing.get("resume_used", ""))
+        applied = app_fields.get("applied_date", existing.get("applied_date"))
+        followup = app_fields.get("next_action", existing.get("next_action"))
+        notes = app_fields.get("notes", existing.get("notes", ""))
+        timestamp = _now()
+        connection.execute(
+            """INSERT INTO applications (job_id,status,resume_used,applied_date,next_action,notes,updated_at)
+               VALUES (?,?,?,?,?,?,?) ON CONFLICT(job_id) DO UPDATE SET
+               status=excluded.status,resume_used=excluded.resume_used,applied_date=excluded.applied_date,
+               next_action=excluded.next_action,notes=excluded.notes,updated_at=excluded.updated_at""",
+            (job_id, status, resume, applied, followup, notes, timestamp),
+        )
+        if "status" in app_fields and status != existing.get("status"):
+            connection.execute(
+                "INSERT INTO activity_log (entity_id,event_type,timestamp,outcome) VALUES (?,?,?,?)",
+                (job_id, "status_changed", timestamp, status),
+            )
+    return next((item for item in list_jobs() if int(item["id"]) == job_id), None)
+
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "JobAgentDashboard/0.1"
 
@@ -335,6 +406,31 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json({"deleted": True, "job_id": job_id})
         except Exception as exc:
             self._json({"error": f"Could not delete job #{job_id}: {exc}"}, 500)
+
+
+    def do_PATCH(self) -> None:
+        if not self._local_request_allowed():
+            self._json({"error": "Local requests only."}, 403)
+            return
+        path = urlsplit(self.path).path
+        prefix = "/api/jobs/"
+        raw_job_id = path.removeprefix(prefix) if path.startswith(prefix) else ""
+        if not raw_job_id.isdigit() or int(raw_job_id) < 1:
+            self._json({"error": "A valid job ID is required."}, 400)
+            return
+        try:
+            payload = self._read_json()
+            updated = _update_job(int(raw_job_id), payload)
+            if updated is None:
+                self._json({"error": f"Job #{raw_job_id} was not found."}, 404)
+                return
+            self._json({"job": updated})
+        except ValueError as exc:
+            self._json({"error": str(exc)}, 400)
+        except sqlite3.IntegrityError:
+            self._json({"error": "That job URL is already tracked."}, 409)
+        except Exception as exc:
+            self._json({"error": f"Could not update application: {exc}"}, 500)
 
     def do_POST(self) -> None:
         if not self._local_request_allowed():
