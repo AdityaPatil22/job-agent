@@ -423,10 +423,7 @@ def match_email_to_job(
             score, reason = 0.96, "The company and role both match the email."
         elif company_match and company_counts.get(company_norm, 0) == 1:
             score, reason = 0.76, "Company matches, but the email does not identify the role."
-        elif domain_match and len([
-            item for item in jobs
-            if _text_normalized(str(item.get("company") or "")) == company_norm
-        ]) == 1:
+        elif domain_match and company_counts.get(company_norm, 0) == 1:
             score, reason = 0.70, "Sender domain matches the company, but the role is not explicit."
         elif company_match or domain_match or title_match:
             score, reason = 0.52, "Only part of the job details match; confirmation is required."
@@ -573,7 +570,8 @@ def sync_gmail(
                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                         (
                             message_id, message_ref.get("threadId", ""),
-                            subject[:500], sender[:500], received_at, snippet,
+                            subject[:500] if status else "", sender[:500] if status else "",
+                            received_at, snippet if status else "",
                             status, match.get("job_id"), float(match.get("confidence", 0)),
                             initial_disposition, reason[:1000], datetime.now(timezone.utc).isoformat(),
                         ),
