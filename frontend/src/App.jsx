@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { normalizeStartedTask } from "./task-state.js";
 import {
   Activity,
   ArrowDownToLine,
@@ -389,7 +390,7 @@ export default function App() {
     try {
       const result = await api(path, { method: "POST", body: JSON.stringify(payload) });
       if (result.task_id) {
-        setCurrentTask({ ...result, id: result.task_id, label: label || result.label, output: "Starting task…" });
+        setCurrentTask(normalizeStartedTask(result, label));
         notify((label || result.label || "Task") + " started. If it requests input, use the terminal running Job-Agent.");
         return true;
       }

@@ -42,6 +42,10 @@ jobs:
           npm install
           npm run build
 
+      - name: Run frontend task-state tests
+        working-directory: frontend
+        run: npm test
+
       - name: Check legacy dashboard JavaScript syntax
         run: node --check src/job_agent/static/app.js
 
