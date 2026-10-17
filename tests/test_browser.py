@@ -1,11 +1,13 @@
-"""Unit tests for Chrome/CDP browser configuration."""
+"""Unit tests for Chrome/CDP browser configuration and lifecycle."""
 
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
 
 from job_agent.browser import (
     DEFAULT_CDP_URL,
+    BrowserManager,
     build_chrome_command,
     is_cdp_available,
     validate_cdp_url,
@@ -62,3 +64,31 @@ def test_cdp_probe_returns_false_when_endpoint_is_unavailable(monkeypatch: pytes
 
     monkeypatch.setattr("job_agent.browser.urlopen", raise_url_error)
     assert is_cdp_available(DEFAULT_CDP_URL) is False
+
+
+def test_chrome_mode_disconnect_does_not_close_user_browser() -> None:
+    manager = BrowserManager(mode="chrome")
+    context = Mock()
+    playwright = Mock()
+    manager._context = context
+    manager._playwright = playwright
+    manager._owns_context = False
+
+    manager.close()
+
+    context.close.assert_not_called()
+    playwright.stop.assert_called_once_with()
+
+
+def test_managed_mode_closes_its_owned_context() -> None:
+    manager = BrowserManager(mode="managed")
+    context = Mock()
+    playwright = Mock()
+    manager._context = context
+    manager._playwright = playwright
+    manager._owns_context = True
+
+    manager.close()
+
+    context.close.assert_called_once_with()
+    playwright.stop.assert_called_once_with()
