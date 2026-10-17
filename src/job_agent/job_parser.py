@@ -26,6 +26,11 @@ USER_AGENT = (
 REQUEST_TIMEOUT_SECONDS = 15
 BROWSER_TIMEOUT_MS = 15_000
 PLACEHOLDER_VALUES = {"", "unknown company", "untitled role"}
+GENERIC_PAGE_TITLES = {
+    "career", "careers", "careers home", "job", "jobs", "job search",
+    "job listings", "job openings", "job opportunities", "open positions",
+    "opportunities", "sign in", "login", "home",
+}
 CHALLENGE_MARKERS = (
     "just a moment",
     "access denied",
@@ -144,7 +149,12 @@ def parse_job_html(html: str, url: str) -> Job:
 def _is_detected(value: str, placeholder: str) -> bool:
     cleaned = _clean(value)
     lowered = cleaned.lower()
-    return bool(cleaned and lowered != placeholder.lower() and not any(marker in lowered for marker in CHALLENGE_MARKERS))
+    return bool(
+        cleaned
+        and lowered != placeholder.lower()
+        and lowered not in GENERIC_PAGE_TITLES
+        and not any(marker in lowered for marker in CHALLENGE_MARKERS)
+    )
 
 
 def _needs_browser_retry(job: Job) -> bool:
