@@ -79,7 +79,7 @@ SUBMIT_PATTERN = re.compile(
 )
 NEXT_PATTERN = re.compile(r"\b(next|continue|proceed|save and continue|next step)\b", re.I)
 APPLY_CTA_PATTERN = re.compile(
-    r"^(apply|apply now|apply for (this )?(job|role)|apply to (this )?(job|role)|"
+    r"^(apply|apply now|apply (for|to) .+|"
     r"start (your )?application|begin (your )?application|easy apply|"
     r"continue to application|apply externally|apply on company site)$",
     re.I,
@@ -1317,6 +1317,14 @@ def prepare_application_page(
                         continue
                     tag, kind = _element_type(element)
                     if tag == "button" or _element_role(element) == "button":
+                        button_text = _normalize(
+                            element.get_attribute("aria-label") or element.inner_text() or ""
+                        )
+                        # An exact "Apply" button is ambiguous and could be a
+                        # one-click submission. Navigation links are safe, but
+                        # only click a button with a clear start-application label.
+                        if button_text == "apply":
+                            continue
                         try:
                             inside_form = bool(element.evaluate("el => Boolean(el.closest('form'))"))
                         except Exception:
