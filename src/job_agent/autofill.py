@@ -395,51 +395,67 @@ def _is_custom_combobox(element: Any, tag: str) -> bool:
         return False
 
 
-def detect_resume_upload(page: Page) -> Any | None:
-    """Find a file input likely to accept a resume or CV."""
-    inputs = page.locator('input[type="file"]')
-    ranked: list[tuple[int, Any]] = []
-    for index in range(inputs.count()):
-        element = inputs.nth(index)
+def detect_resume_upload(page: Page | Frame) -> Any | None:
+    """Find a likely resume input across the main page and embedded frames."""
+    ranked: list[tuple[int, int, Any]] = []
+    order = 0
+    for context in _iter_search_contexts(page):
         try:
-            attributes = " ".join(
-                element.get_attribute(attr) or ""
-                for attr in ("id", "name", "accept", "aria-label", "title", "data-testid")
-            )
-            parent_text = ""
-            try:
-                parent = element.locator(
-                    "xpath=ancestor::*[self::label or self::div or self::section][1]"
-                )
-                if parent.count():
-                    parent_text = parent.first.inner_text(timeout=500)
-            except Exception:
-                pass
-            context = _normalize(attributes + " " + parent_text)
-            score = 0
-            if any(_normalize(word) in context for word in RESUME_WORDS):
-                score += 10
-            if any(_normalize(word) in context for word in UPLOAD_WORDS):
-                score += 3
-            if "cover letter" in context and "resume" not in context:
-                score -= 10
-            ranked.append((score, element))
+            inputs = context.locator('input[type="file"]')
+            count = inputs.count()
         except Exception:
             continue
+        for index in range(count):
+            element = inputs.nth(index)
+            try:
+                attributes = " ".join(
+                    element.get_attribute(attr) or ""
+                    for attr in (
+                        "id", "name", "accept", "aria-label", "title",
+                        "data-testid", "data-qa", "data-field",
+                    )
+                )
+                # Associated label and surrounding field copy catch many ATS
+                # implementations whose file input itself has no useful name.
+                label_text = " ".join(_label_candidates(element))
+                parent_text = ""
+                try:
+                    parent = element.locator(
+                        "xpath=ancestor::*[self::label or self::div or self::section][1]"
+                    )
+                    if parent.count():
+                        parent_text = parent.first.inner_text(timeout=500)
+                except Exception:
+                    pass
+                context_text = _normalize(attributes + " " + label_text + " " + parent_text)
+                score = 0
+                if any(_normalize(word) in context_text for word in RESUME_WORDS):
+                    score += 10
+                if any(_normalize(word) in context_text for word in UPLOAD_WORDS):
+                    score += 3
+                if "cover letter" in context_text and not any(
+                    _normalize(word) in context_text for word in RESUME_WORDS
+                ):
+                    score = -10
+                if score >= 0:
+                    ranked.append((score, order, element))
+                order += 1
+            except Exception:
+                order += 1
+                continue
 
     if not ranked:
         return None
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    if ranked[0][0] > 0:
-        # Don't guess when multiple unlabelled file inputs are present.
-        top_score = ranked[0][0]
-        if top_score == 0:
-            return None
-        return ranked[0][1]
-    return ranked[0][1] if len(ranked) == 1 else None
+    highest = max(item[0] for item in ranked)
+    winners = [item for item in ranked if item[0] == highest]
+    # A specific label can disambiguate among several file inputs. Never guess
+    # between equally plausible resume fields or unrelated unlabelled uploads.
+    if highest > 0:
+        return winners[0][2] if len(winners) == 1 else None
+    return ranked[0][2] if len(ranked) == 1 else None
 
 
-def upload_resume(page: Page, resume_path: str | Path) -> bool:
+def upload_resume(page: Page | Frame, resume_path: str | Path) -> bool:
     """Upload a resume through the detected file input."""
     path = Path(resume_path).expanduser().resolve()
     if not path.is_file():
@@ -455,34 +471,36 @@ def upload_resume(page: Page, resume_path: str | Path) -> bool:
     return True
 
 
-def _visible_form_snapshot(page: Page) -> tuple[tuple[str, str], ...]:
-    """Capture visible native values to detect asynchronous resume parsing."""
+def _visible_form_snapshot(page: Page | Frame) -> tuple[tuple[str, str], ...]:
+    """Capture visible control values across the main page and embedded frames."""
     snapshot: list[tuple[str, str]] = []
-    fields = page.locator("input, textarea, select")
-    try:
-        count = fields.count()
-    except Exception:
-        return ()
-
-    for index in range(count):
-        element = fields.nth(index)
+    for frame_index, context in enumerate(_iter_search_contexts(page)):
+        fields = context.locator("input, textarea, select")
         try:
-            if not element.is_visible():
-                continue
-            tag, kind = _element_type(element)
-            if kind in {"password", "file", "submit", "button", "reset"}:
-                continue
-            value = element.input_value()
-            if kind in {"checkbox", "radio"}:
-                value = "checked" if element.is_checked() else "unchecked"
-            identifier = element.get_attribute("name") or element.get_attribute("id") or str(index)
-            snapshot.append((f"{tag}:{kind}:{identifier}", value))
+            count = fields.count()
         except Exception:
             continue
+
+        for index in range(count):
+            element = fields.nth(index)
+            try:
+                if not element.is_visible():
+                    continue
+                tag, kind = _element_type(element)
+                if kind in {"password", "file", "submit", "button", "reset"}:
+                    continue
+                value = element.input_value()
+                if kind in {"checkbox", "radio"}:
+                    value = "checked" if element.is_checked() else "unchecked"
+                identifier = element.get_attribute("name") or element.get_attribute("id") or str(index)
+                labels = "|".join(_label_candidates(element)[:2])
+                snapshot.append((f"{frame_index}:{tag}:{kind}:{identifier}:{labels}", value))
+            except Exception:
+                continue
     return tuple(snapshot)
 
 
-def _wait_for_resume_processing(page: Page, timeout_ms: int = 8_000) -> None:
+def _wait_for_resume_processing(page: Page | Frame, timeout_ms: int = 8_000) -> None:
     """Wait for asynchronous resume parsing to settle, with a hard timeout."""
     started = time.monotonic()
     deadline = started + timeout_ms / 1000
