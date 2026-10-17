@@ -257,7 +257,16 @@ def apply_command(
             field_mappings=field_mappings,
         )
         click.echo(report.render())
-        wait_for_submit_button(page)
+        if browser_mode.lower() == "managed":
+            # Managed mode closes its context on exit, so allow a human review
+            # pause. Persistent Chrome mode must exit promptly: its application
+            # tab stays open and the dashboard can mark the task as completed.
+            wait_for_submit_button(page)
+        else:
+            click.echo(
+                "\\nAutofill finished. The Chrome tab will remain open for your review. "
+                "Complete any unanswered questions and submit the application yourself."
+            )
         update_application_status(
             job_id,
             "ready",
