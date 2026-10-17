@@ -59,7 +59,6 @@ def cli() -> None:
 )
 def start_command(host: str, port: int) -> None:
     """Start the local web dashboard."""
-    # Import lazily so non-dashboard CLI commands do not load HTTP server code.
     from .dashboard import serve
 
     try:
@@ -235,8 +234,9 @@ def apply_command(
     else:
         click.echo("Opening Job-Agent's managed Playwright browser. Login if needed and review every field manually.")
 
-    manager = BrowserManager(headless=headless, mode=browser_mode.lower(), cdp_url=cdp_url)
+    manager: BrowserManager | None = None
     try:
+        manager = BrowserManager(headless=headless, mode=browser_mode.lower(), cdp_url=cdp_url)
         page = manager.goto(job["url"])
         report = autofill_form(page, job_id, resume_name, profile=profile, resumes_dir=RESUMES_DIR)
         click.echo(report.render())
@@ -253,7 +253,8 @@ def apply_command(
     except Exception as exc:
         raise click.ClickException(f"Application assistance failed: {exc}") from exc
     finally:
-        manager.close()
+        if manager is not None:
+            manager.close()
 
 
 @cli.command("mark-applied")
