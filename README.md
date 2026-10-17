@@ -1,140 +1,149 @@
 # Job-Agent
 
-A lightweight Python automation tool to streamline job applications. Automate form filling with Playwright, track applications in SQLite, and manage referrals—all locally on your Mac.
+A lightweight local job-application assistant built with Python, Playwright, and SQLite. Paste a job URL, choose a resume, autofill the supported fields, review unknown questions, and submit the application yourself.
 
 ## What it does
 
-- **Job tracking**: Store jobs from career pages and LinkedIn in a local SQLite database
-- **Form autofill**: Upload your resume → let the ATS auto-fill fields → review gaps → submit
-- **Application management**: Track status (discovered → shortlisted → applied → interview/rejected)
-- **Batch processing**: Apply to 20-30 jobs per day with 70% automation, manual fill for custom questions
-- **Persistent sessions**: Stay logged in to portals across multiple applications
+- **Job tracking:** Save jobs from career pages and track application status in SQLite.
+- **Assisted autofill:** Upload a resume where supported, fill known candidate details, and report fields that need review.
+- **Persistent sessions:** Use either Job-Agent's own persistent Playwright profile or attach to a dedicated Google Chrome profile.
+- **Human checkpoints:** Pause on login pages and leave custom or ambiguous questions for review.
+- **Application management:** Track status and export the tracker to CSV.
+- **Local-first:** Candidate profile, browser state, database, and resume files stay on your machine.
 
 ## Tech stack
 
-- **Python 3.12+** — scripting and automation
-- **Playwright** — browser automation for form filling
-- **SQLite** — local job and application database
-- **Pydantic** — configuration validation
-- **Requests/BeautifulSoup** — page parsing (later)
-
-## Project structure
-
-```
-job-agent/
-├── README.md                 # This file
-├── PLAN.md                   # Architecture and implementation plan
-├── pyproject.toml            # Python dependencies
-├── config/
-│   ├── profile.json          # Your candidate profile (copy from .example)
-│   ├── field_mappings.json   # Form field aliases (copy from .example)
-│   └── preferences.json      # Job search filters (future)
-├── data/
-│   └── jobs.db              # SQLite database (jobs, applications)
-├── resumes/
-│   ├── ai-engineer.pdf      # Role-specific resumes
-│   └── infrastructure.pdf
-├── src/
-│   └── job_agent/
-│       ├── __init__.py
-│       ├── main.py          # CLI entry point
-│       ├── config.py        # Load and validate profile/config
-│       ├── database.py      # SQLite schema and operations
-│       ├── browser.py       # Playwright browser session management
-│       ├── autofill.py      # Form detection and field filling
-│       ├── job_parser.py    # Parse job details from URLs
-│       ├── urls.py          # Canonical job URL normalization
-│       └── models.py        # Pydantic data models
-├── tests/
-│   ├── test_database.py     # SQLite operations
-│   ├── test_autofill.py     # Form field detection
-│   ├── test_dashboard.py    # CSV, backup and URL regressions
-│   └── test_parser.py       # Job page parsing
-├── .gitignore
-└── .env.example             # Template for local secrets
-```
+- Python 3.12+
+- Playwright
+- SQLite
+- Pydantic
+- Requests and BeautifulSoup
 
 ## Getting started
 
-1. **Install dependencies**
-   ```bash
-   python3 -m venv .venv
-   source .venv/bin/activate
-   python -m pip install -e ".[dev]"
-   python -m playwright install chromium
-   ```
+### 1. Install dependencies
 
-2. **Start the dashboard**
-   ```bash
-   job-agent start
-   ```
+macOS / Linux:
 
-   Open the dashboard at `http://127.0.0.1:8765` after the command starts. You can choose another port with
-   `job-agent start --port 8877`. The server is local-only; it refuses non-loopback
-   bind addresses. If the `job-agent` command is not found, activate your virtual
-   environment and run `python -m pip install -e .` from the repository root.
-   The existing `./start-dashboard.sh` launcher remains supported.
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e ".[dev]"
+python -m playwright install chromium
+```
 
+Windows PowerShell:
 
-3. **Set up configuration**
-   ```bash
-   cp config/profile.example.json config/profile.json
-   cp config/field_mappings.example.json config/field_mappings.json
-   # Edit with your details
-   ```
+```powershell
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+python -m playwright install chromium
+```
 
-4. **Add resumes**
-   ```bash
-   cp your_resume.pdf resumes/ai-engineer.pdf
-   cp your_other_resume.pdf resumes/infrastructure.pdf
-   ```
+### 2. Set up your profile and field mappings
 
-5. **Add a job**
-   ```bash
-   job-agent add-job https://career-page.com/job/123
-   ```
+```bash
+cp config/profile.example.json config/profile.json
+cp config/field_mappings.example.json config/field_mappings.json
+```
 
-6. **Apply to a job**
-   ```bash
-   job-agent apply --job-id 42 --resume ai-engineer.pdf
-   ```
+Edit both files with your real candidate information. Do not commit personal details.
 
-7. **Review applications**
-   ```bash
-   job-agent jobs --status applied
-   ```
+### 3. Add your resumes
 
-## MVP scope
+Put role-specific resumes in the `resumes/` directory, for example:
 
-See `PLAN.md` for full architecture and implementation details.
+```text
+resumes/
+├── ai-engineer.pdf
+└── infrastructure.pdf
+```
 
-**In scope (Phase 1-4):**
-- Job intake, browser autofill, application tracking
-- Form gap reporting with pause before submit
-- Persistent browser session for 30 apps/day
-- Multi-page form handling
+### 4. Start the dashboard (optional)
 
-**Out of scope (future):**
-- Job discovery automation and intelligent filtering
-- Referral workflow and cold outreach generation
-- Scheduled execution and notifications
+```bash
+job-agent start
+```
 
-## Implementation milestones
+Open `http://127.0.0.1:8765`. The dashboard server binds to loopback by default.
 
-1. **Foundation**: Database schema, profile config, CLI entry point
-2. **Job intake**: `add-job` command with parsing and deduplication
-3. **Browser & autofill** (critical path): Resume upload, field detection, gap reporting
-4. **Application tracking**: `apply` command, status management, export
-5. **Testing & refinement**: Unit tests, integration tests, real applications
+### 5. Add a job and autofill it
 
-See `PLAN.md` for detailed implementation plan, success criteria, and risk mitigations.
+```bash
+job-agent add-job "https://careers.example.com/jobs/123"
+job-agent jobs
+job-agent apply --job-id 1 --resume ai-engineer.pdf
+```
 
+By default, `apply` uses Job-Agent's managed Playwright Chromium profile. That profile persists between runs, but it is separate from your everyday Chrome profile.
+
+## Use Google Chrome with persistent login sessions
+
+Use this mode when you want Job-Agent to work inside a visible Google Chrome window and preserve the login state between application runs.
+
+### 1. Start the dedicated Job-Agent Chrome profile
+
+```bash
+job-agent browser
+```
+
+This launches Google Chrome with a dedicated profile stored at `data/chrome_profile/` and Chrome DevTools Protocol (CDP) bound to `127.0.0.1:9222`. Sign in to your Google account and career portals in this window. You only need to sign in again if the relevant site expires its session.
+
+To use a different local CDP port or open a different starting page:
+
+```bash
+job-agent browser --port 9223 --url "https://accounts.google.com/"
+```
+
+### 2. Apply using the Chrome session
+
+```bash
+job-agent apply --job-id 1 --resume ai-engineer.pdf --browser chrome
+```
+
+For a non-default CDP port, pass the matching local endpoint:
+
+```bash
+job-agent apply --job-id 1 --resume ai-engineer.pdf \
+  --browser chrome --cdp-url http://127.0.0.1:9223
+```
+
+Chrome mode opens a new tab for each job and leaves Chrome, its profile, and other tabs open when Job-Agent finishes. It does not click the final Submit button; review the completed application and submit it yourself.
+
+### Important Chrome profile limitation
+
+Chrome does not allow reliable CDP attachment to an ordinary Chrome session that was started without remote debugging. Recent Chrome versions also restrict remote debugging against the default Chrome user-data directory. For that reason, `job-agent browser` uses a separate persistent profile rather than reading cookies from your normal everyday Chrome profile. You sign in to Google once in the Job-Agent Chrome window and its sessions persist there.
+
+The debugging port exposes powerful browser control. Job-Agent binds it to localhost only; do not change the debugging address to `0.0.0.0`, expose the port to your network, or use this mode on a shared machine. Do not manually launch another Chrome process against the same `data/chrome_profile/` directory.
+
+If Chrome is not found automatically, install Google Chrome and ensure it is available in a standard installation location or on your system `PATH`.
+
+## Login, account creation, and CAPTCHA handling
+
+Job-Agent cannot guarantee that every career site will accept automated form filling. ATS platforms and employer-specific portals use different page structures, identity systems, validation, and custom questions.
+
+When a site requires sign-in, account creation, MFA, CAPTCHA, or another user-only step, complete that step in the visible browser. Use a supported login page and continue after authentication. Do not attempt to bypass CAPTCHA or multi-factor authentication. If a form control or question is ambiguous, leave it for manual review.
+
+## CLI commands
+
+```bash
+job-agent start
+job-agent browser
+job-agent add-job "https://careers.example.com/jobs/123"
+job-agent jobs --status shortlisted
+job-agent apply --job-id 1 --resume ai-engineer.pdf
+job-agent apply --job-id 1 --resume ai-engineer.pdf --browser chrome
+job-agent mark-applied --job-id 1
+job-agent status --job-id 1
+job-agent export --format csv
+```
 
 ## Gmail integration
 
-The dashboard can connect to Gmail using a local OAuth Desktop client and the Gmail read-only scope. It can detect application confirmations, interview requests, rejection messages, and offers. High-confidence matches update the tracker; ambiguous messages appear in the dashboard review queue. The optional integration never sends or modifies mail.
+The dashboard can connect to Gmail using a local OAuth Desktop client with read-only mailbox access. It can detect application confirmations, interview requests, rejections, and offers. High-confidence matches update the tracker; ambiguous messages appear in the dashboard review queue. The integration does not send or modify mail.
 
-Install and configure it using [the Gmail setup guide](docs/gmail-setup.md), then run:
+See [the Gmail setup guide](docs/gmail-setup.md), then run:
 
 ```bash
 python -m pip install -e ".[gmail]"
@@ -143,32 +152,23 @@ job-agent email-sync
 job-agent email-status
 ```
 
-Automatic syncing can be enabled in the dashboard and runs every 15 minutes while it stays open. OAuth credentials and tokens remain local and are ignored by Git.
+Automatic syncing can be enabled in the dashboard and runs every 15 minutes while the dashboard is open. OAuth credentials and tokens remain local and should not be committed.
 
 ## Data safety and recovery
 
-- The dashboard binds to loopback by default and is intended for local use only.
-- Candidate profile data, local browser state, the SQLite database, and resume files should remain local. Do not commit personal data or exported application CSVs.
-- Job URLs are normalized across common differences such as host casing, trailing slashes, fragments, and tracking parameters. Job-identifying query parameters are retained.
-- CSV import validates all rows before writing, merges rows by normalized URL, and treats blank optional fields as "keep the existing value." Rows absent from an import are never deleted.
-- Before importing into an existing database, Job-Agent creates a SQLite-native snapshot in \`data/backups/\`. CSV exports prefix potentially executable spreadsheet cells to reduce formula-injection risk.
+- The dashboard binds to loopback by default.
+- Candidate profile data, local browser state, SQLite database files, resume files, OAuth tokens, and exported application data should remain local.
+- Do not commit real profile data or Chrome profile files.
+- CSV import validates rows before writing, merges rows by normalized URL, and creates a SQLite backup before importing.
+- CSV exports prefix potentially executable spreadsheet cells to reduce formula-injection risk.
 
-To restore a snapshot, first stop the dashboard and make a copy of the current database. Then replace it with the chosen backup file:
-
-\`\`\`bash
-cp data/jobs.db data/jobs.db.before-restore
-cp data/backups/<backup-file>.db data/jobs.db
-\`\`\`
-
-Keep the pre-restore copy until the dashboard opens and your records look correct. CSV exports are also useful for portability, but they are not a substitute for a database backup.
+To restore a database backup, stop the dashboard first and make a copy of the current database before replacing it with the selected file in `data/backups/`.
 
 ## Tests
 
-Install the development dependencies and Chromium as shown above, then run:
-
-\`\`\`bash
+```bash
 python -m compileall -q src tests
 python -m pytest -q
-\`\`\`
+```
 
-GitHub Actions runs the compile and test steps for pushes and pull requests. Browser tests use a local test page and do not submit real applications.
+GitHub Actions runs compile and test steps for pushes and pull requests. Tests use local or mocked browser behavior and must not submit real applications.
