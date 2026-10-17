@@ -627,12 +627,21 @@ def _radio_group_key(element: Any, index: int) -> str:
     try:
         group_label = element.evaluate(
             """el => {
-                const fieldset = el.closest('fieldset');
-                return fieldset ? ((fieldset.querySelector('legend') || {}).textContent || '').trim() : '';
+                const group = el.closest('[role="radiogroup"], fieldset');
+                if (!group) return '';
+                const legend = group.querySelector('legend');
+                if (legend && legend.textContent) return legend.textContent.trim();
+                const ariaLabel = group.getAttribute('aria-label');
+                if (ariaLabel) return ariaLabel.trim();
+                const labelledBy = (group.getAttribute('aria-labelledby') || '').split(/\\s+/);
+                return labelledBy.map(id => document.getElementById(id))
+                    .filter(Boolean)
+                    .map(node => (node.innerText || node.textContent || '').trim())
+                    .filter(Boolean).join(' ');
             }"""
         )
         if group_label:
-            return f"legend:{_normalize(group_label)}"
+            return f"group:{_normalize(group_label)}"
     except Exception:
         pass
     return f"radio:{element.get_attribute('id') or index}"
@@ -641,20 +650,30 @@ def _radio_group_key(element: Any, index: int) -> str:
 def _radio_group_elements(element: Any, index: int) -> list[Any]:
     del index
     name = element.get_attribute("name") or ""
-    radios = element.page.locator('input[type="radio"]')
-    if name:
+    if name and _element_type(element)[0] == "input":
+        radios = element.page.locator('input[type="radio"]')
         return [
             radios.nth(position)
             for position in range(radios.count())
             if (radios.nth(position).get_attribute("name") or "") == name
         ]
     try:
-        fieldset = element.locator("xpath=ancestor::fieldset[1]")
-        if fieldset.count():
-            group = fieldset.locator('input[type="radio"]')
-            return [group.nth(position) for position in range(group.count())]
+        group = element.locator("xpath=ancestor::*[@role='radiogroup' or self::fieldset][1]")
+        if group.count():
+            options = group.locator('[role="radio"], input[type="radio"]')
+            if options.count():
+                return [options.nth(position) for position in range(options.count())]
     except Exception:
         pass
+    if name:
+        radios = element.page.locator('input[type="radio"]')
+        native = [
+            radios.nth(position)
+            for position in range(radios.count())
+            if (radios.nth(position).get_attribute("name") or "") == name
+        ]
+        if native:
+            return native
     return [element]
 
 
@@ -668,10 +687,20 @@ def _radio_option_labels(element: Any) -> list[str]:
             values.extend(str(label) for label in labels if label)
     except Exception:
         pass
-    value = element.get_attribute("value") or ""
-    if value:
-        values.append(value)
-    return values
+    for attribute in ("aria-label", "value", "data-value"):
+        try:
+            value = element.get_attribute(attribute) or ""
+        except Exception:
+            value = ""
+        if value:
+            values.append(value)
+    try:
+        visible_text = element.inner_text().strip()
+        if visible_text:
+            values.append(visible_text)
+    except Exception:
+        pass
+    return list(dict.fromkeys(values))
 
 
 def _radio_group_selected(options: list[Any]) -> bool:
