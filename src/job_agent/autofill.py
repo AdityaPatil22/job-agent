@@ -1335,7 +1335,7 @@ def prepare_application_page(
 
     # Prefer an explicit application link and only try one CTA. A human can
     # still start the workflow manually if the site uses an unsupported widget.
-    element, target_url, _context = candidates[0]
+    element, _target_url, _context = candidates[0]
     original_pages = set(page.context.pages)
     try:
         element.click(timeout=5_000)
