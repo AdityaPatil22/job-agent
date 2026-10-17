@@ -104,11 +104,11 @@ def test_ensure_chrome_ready_starts_persistent_profile_when_missing(
     monkeypatch.setattr("job_agent.browser.start_chrome", start)
     monkeypatch.setattr("job_agent.browser.time.sleep", lambda _seconds: None)
 
-    assert ensure_chrome_ready(DEFAULT_CDP_URL, start_url="https://jobs.example.com/role") is True
+    assert ensure_chrome_ready(DEFAULT_CDP_URL) is True
 
     start.assert_called_once()
     assert start.call_args.kwargs["port"] == 9222
-    assert start.call_args.kwargs["url"] == "https://jobs.example.com/role"
+    assert start.call_args.kwargs["url"] == "about:blank"
 
 
 def test_ensure_chrome_ready_reuses_existing_endpoint(
