@@ -426,3 +426,25 @@ def test_detects_single_field_ats_step_without_application_form_wrapper(page, tm
     assert page.locator("#email").input_value() == "ada@example.org"
     assert len(report.filled) == 2
     assert not report.failed
+
+
+def test_autofill_report_marks_missing_application_form(page, tmp_path: Path) -> None:
+    page.set_content(
+        """
+        <h1>Software Engineer</h1>
+        <input type="search" placeholder="Search jobs">
+        <button type="button">Search</button>
+        """
+    )
+
+    report = autofill_form(
+        page,
+        job_id=1,
+        resume_name="missing.pdf",
+        profile=CandidateProfile(first_name="Ada", email="ada@example.org"),
+        resumes_dir=tmp_path,
+        field_mappings={"first_name": ["first name"], "email": ["email address"]},
+    )
+
+    assert report.application_form_detected is False
+    assert "No recognizable application form was found" in report.skipped[0]

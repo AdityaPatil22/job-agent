@@ -258,10 +258,7 @@ def apply_command(
             field_mappings=field_mappings,
         )
         click.echo(report.render())
-        form_detected = not any(
-            "No recognizable application form was found" in item
-            for item in report.skipped
-        )
+        form_detected = bool(getattr(report, "application_form_detected", True))
         if browser_mode.lower() == "managed":
             # Managed mode closes its context on exit, so allow a human review
             # pause. Persistent Chrome mode stays open and must not block the

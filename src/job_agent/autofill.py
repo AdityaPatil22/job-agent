@@ -1418,6 +1418,7 @@ def autofill_form(
 
     report = FormGapReport()
     if not _looks_like_application_form(page, mappings):
+        report.application_form_detected = False
         report.skipped.append(
             "No recognizable application form was found on this page. It may still be a job-details page, "
             "or the application form may require a manual login/Apply step."

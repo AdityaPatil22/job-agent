@@ -10,6 +10,7 @@ from job_agent import main
 
 
 class FakeReport:
+    application_form_detected = True
     resume_uploaded = True
     filled = ["Email address <- email"]
     skipped = []
@@ -87,6 +88,7 @@ def test_managed_autofill_keeps_review_pause(monkeypatch) -> None:
 
 
 class FakeNoFormReport(FakeReport):
+    application_form_detected = False
     skipped = [
         "No recognizable application form was found on this page. It may still be a job-details page."
     ]
