@@ -4,6 +4,7 @@ A local job-application assistant built with Python, Playwright, and SQLite. Add
 
 ## Features
 
+- **React dashboard:** Vite + React UI styled with Tailwind CSS, served by the existing local Python dashboard server.
 - **Job tracking:** Save job URLs and track application status in a local SQLite database.
 - **Assisted autofill:** Upload a resume when supported, fill known candidate details, and report fields that need review.
 - **Persistent browser sessions:** Use Job-Agent's managed Playwright browser or attach to a dedicated Google Chrome profile.
@@ -14,6 +15,7 @@ A local job-application assistant built with Python, Playwright, and SQLite. Add
 ## Requirements
 
 - Python 3.12+
+- Node.js 20.19+ or 22.12+ and npm (to build or develop the React UI)
 - Google Chrome (only needed for Chrome mode)
 - A Google account and Google Cloud project (only needed for Gmail integration)
 
@@ -37,7 +39,38 @@ python -m pip install -e ".[dev]"
 python -m playwright install chromium
 ```
 
-## 2. Configure your candidate profile
+## 2. Build the React frontend
+
+The dashboard UI is a Vite + React application using Tailwind CSS. Build it once after installing the Python and Node dependencies:
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+The build output is written to `src/job_agent/static/react-build/`, which is served by the existing Python dashboard at `http://127.0.0.1:8765`. Re-run `npm run build` whenever you change the frontend. The production dashboard will show a setup message if the React build is missing.
+
+### Frontend development mode
+
+Start the Python backend in one terminal:
+
+```bash
+job-agent start
+```
+
+Then start Vite in a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open [http://127.0.0.1:5173](http://127.0.0.1:5173). Vite proxies `/api/*` requests to the Python backend on port 8765, so the React UI uses the same SQLite, Gmail, task and CRUD APIs as the production dashboard. Keep both processes running during development.
+
+## 3. Configure your candidate profile
 
 Copy the example configuration files:
 
@@ -63,7 +96,7 @@ resumes/
 └── infrastructure.pdf
 ```
 
-## 3. Run the dashboard and add a job
+## 4. Run the dashboard and add a job
 
 Start the local dashboard:
 
@@ -88,7 +121,7 @@ job-agent apply --job-id 1 --resume ai-engineer.pdf
 
 By default, this browser uses Job-Agent's own persistent Playwright profile. It is separate from your everyday Chrome profile.
 
-## 4. Connect Job-Agent to Google Chrome
+## 5. Connect Job-Agent to Google Chrome
 
 Chrome mode lets Playwright control a visible Chrome window with a persistent profile. This is useful when you need to log in to career portals once and reuse those sessions across multiple applications.
 
@@ -137,7 +170,7 @@ Recent Chrome versions restrict remote debugging against the regular default use
 
 Employer portals use different authentication and application flows. Complete sign-in, employer account creation, email verification, MFA, CAPTCHA and other user-only steps manually in the visible browser. Job-Agent does not bypass MFA/CAPTCHA and does not automatically submit applications. If a field or custom question is ambiguous, leave it for manual review.
 
-## 5. Connect Gmail for application status tracking
+## 6. Connect Gmail for application status tracking
 
 The optional Gmail integration reads email messages to identify application confirmations, interview requests, rejections and offers. High-confidence messages can update the corresponding tracked job; ambiguous matches go to a review queue. Gmail access is read-only: Job-Agent does not send, delete, archive or label messages.
 
