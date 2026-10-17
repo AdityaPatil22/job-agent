@@ -125,15 +125,15 @@ By default, this browser uses Job-Agent's own persistent Playwright profile. It 
 
 Chrome mode lets Playwright control a visible Chrome window with a persistent profile. This is useful when you need to log in to career portals once and reuse those sessions across multiple applications.
 
-### Step 1: Launch the Job-Agent Chrome profile
+### Step 1: Launch the Job-Agent Chrome profile (optional)
 
-Make sure Google Chrome is installed, then run:
+The dashboard's **Run autofill** action starts this Chrome profile automatically when no Job-Agent CDP session is running. To sign in before choosing a job, run:
 
 ```bash
 job-agent browser
 ```
 
-Job-Agent launches Chrome using the dedicated profile directory `data/chrome_profile/` and starts Chrome DevTools Protocol (CDP) on `127.0.0.1:9222`. Sign in to your Google account and any career portals in this Chrome window. Cookies and local browser state in this profile are retained for later runs.
+Job-Agent launches Chrome using the dedicated profile directory `data/chrome_profile/` and starts Chrome DevTools Protocol (CDP) on `127.0.0.1:9222`. Sign in to your Google account and career portals in this Chrome window. Cookies and local browser state in this profile are retained for later runs.
 
 You can change the local debugging port or starting page:
 
@@ -156,7 +156,7 @@ job-agent apply --job-id 1 --resume ai-engineer.pdf \
   --browser chrome --cdp-url http://127.0.0.1:9223
 ```
 
-Chrome mode opens a new tab for the application. Job-Agent disconnects when it finishes but leaves Chrome, your profile and other tabs open. Review all fields and click the final Submit button yourself.
+Chrome mode opens a new tab for the application. If the CDP endpoint is not running, Job-Agent launches Chrome with a blank tab and waits for it to become ready before opening the job. If the portal redirects to sign-in, complete it in the visible Chrome window and return to the terminal when prompted. Job-Agent disconnects when it finishes but leaves Chrome, your profile and other tabs open. Review all fields and click the final Submit button yourself.
 
 ### Important: this is a separate Chrome profile
 
