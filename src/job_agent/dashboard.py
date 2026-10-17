@@ -140,7 +140,8 @@ class TaskManager:
                 self._active_id = None
             return self._serialize_task(task)
 
-    def _append_output(self, task_id: str, chunk: str) -> None        with self._lock:
+    def _append_output(self, task_id: str, chunk: str) -> None:
+        with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
                 return
