@@ -126,7 +126,7 @@ function Button({ children, onClick, variant = "secondary", size = "normal", dis
   const base = "inline-flex items-center justify-center gap-2 rounded-lg border font-semibold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50";
   const sizes = size === "small" ? "min-h-8 px-2.5 text-xs" : "min-h-10 px-3.5 text-sm";
   const variants = {
-    primary: "border-[#5b75a8] bg-[#5b75a8] text-white shadow-sm hover:border-[#4d6799] hover:bg-[#4d6799]",
+    primary: "border-[#003049] bg-[#003049] text-white shadow-sm hover:border-[#003049] hover:bg-[#003049]",
     secondary: "border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50",
     ghost: "border-transparent bg-transparent text-slate-600 hover:bg-slate-100",
     danger: "border-rose-200 bg-white text-rose-700 hover:bg-rose-50",
@@ -664,7 +664,7 @@ export default function App() {
           <div className="relative z-10 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
             <div className="max-w-2xl">
               <span className="hero-kicker inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold">
-                <Sparkles size={14} /> YOUR JOB SEARCH WORKSPACE
+                YOUR JOB SEARCH WORKSPACE
               </span>
               <h2 className="mt-4 max-w-xl text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Make your next move with confidence.</h2>
               <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">Keep applications organized, follow up at the right time, and let Job-Agent handle repetitive form filling while you stay in control.</p>
@@ -675,7 +675,7 @@ export default function App() {
             </div>
           </div>
           <div className="hero-footnote mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-4 text-xs">
-            <span className="inline-flex items-center gap-1.5"><ShieldCheck size={14} /> Your data stays on this device</span>
+            <span className="inline-flex items-center gap-1.5"><ShieldCheck size={14} /> Your data stays on your device</span>
             <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} /> You approve every submission</span>
           </div>
         </section>
@@ -704,7 +704,7 @@ export default function App() {
             <div>
               <div className="flex items-center gap-2"><span className="grid size-9 place-items-center rounded-lg bg-blue-50 text-blue-700"><Plus size={18} /></span><h2 className="font-semibold text-slate-900">Add a job</h2></div>
               <p className="mt-2 text-sm leading-5 text-slate-500">Paste a job posting URL to create a tracker entry.</p>
-              <button type="button" className="mt-3 text-sm font-semibold text-blue-700 hover:text-blue-800" onClick={() => openEdit()}>Or add manually <span aria-hidden="true">→</span></button>
+              <span aria-hidden="true">or </span><button type="button" className="mt-3 text-sm font-semibold text-blue-700 hover:text-blue-800" onClick={() => openEdit()}>Add Manually <span aria-hidden="true">→</span></button>
             </div>
             <form onSubmit={onAddJob} className="min-w-0">
               <label htmlFor="job-url" className="mb-1.5 block text-xs font-semibold text-slate-600">Job posting URL</label>
@@ -852,7 +852,7 @@ export default function App() {
                         <td className="px-4 py-4">
                           <div className="flex justify-end gap-1.5">
                             <Button size="small" onClick={() => openEdit(job)}>Edit</Button>
-                            <Button size="small" variant="primary" onClick={() => openAssist(job)}><Sparkles size={13} /> Assist</Button>
+                            <Button size="small" variant="primary" onClick={() => openAssist(job)}>Assist</Button>
                             <Button size="small" variant="danger" onClick={() => deleteJob(job)} aria-label={"Delete " + job.company}><Trash2 size={13} /></Button>
                           </div>
                         </td>

@@ -279,7 +279,7 @@ def _label_candidates(element: Any) -> list[str]:
     candidates: list[str] = []
     try:
         labels = element.evaluate(
-            """el => {
+            r"""el => {
                 const texts = [];
                 const add = node => {
                     const text = node &&
