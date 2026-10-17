@@ -611,9 +611,9 @@ export default function App() {
   if (window.location.pathname === "/gmail-setup.html") return <GmailSetupPage />;
 
   return (
-    <main className="min-h-screen bg-slate-50 text-slate-900">
-      <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
-        <header className="mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    <main className="app-shell min-h-screen bg-slate-50 text-slate-900">
+      <div className="app-container mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-8 lg:py-8">
+        <header className="app-header mb-7 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="grid size-11 place-items-center rounded-xl bg-slate-950 text-white shadow-sm"><BriefcaseBusiness size={22} /></div>
             <div>
@@ -627,7 +627,27 @@ export default function App() {
           </div>
         </header>
 
-        <section aria-label="Application summary" className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+        <section className="dashboard-hero mb-6 overflow-hidden rounded-2xl border p-5 sm:p-7">
+          <div className="relative z-10 flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+            <div className="max-w-2xl">
+              <span className="hero-kicker inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-semibold">
+                <Sparkles size={14} /> YOUR JOB SEARCH WORKSPACE
+              </span>
+              <h2 className="mt-4 max-w-xl text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">Make your next move with confidence.</h2>
+              <p className="mt-2 max-w-xl text-sm leading-6 text-slate-600 sm:text-base">Keep applications organized, follow up at the right time, and let Job-Agent handle repetitive form filling while you stay in control.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button onClick={() => openEdit()} variant="secondary"><Plus size={15} /> Add manually</Button>
+              <a href="#applications" className="hero-link inline-flex min-h-10 items-center gap-2 rounded-lg px-4 text-sm font-semibold">View applications <ExternalLink size={14} /></a>
+            </div>
+          </div>
+          <div className="hero-footnote mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 border-t pt-4 text-xs">
+            <span className="inline-flex items-center gap-1.5"><ShieldCheck size={14} /> Your data stays on this device</span>
+            <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={14} /> You approve every submission</span>
+          </div>
+        </section>
+
+        <section aria-label="Application summary" className="stats-overview mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
           {[
             { label: "Total applications", value: jobs.length, icon: BriefcaseBusiness, color: "bg-blue-50 text-blue-700" },
             { label: "In progress", value: inProgress, icon: Clock3, color: "bg-amber-50 text-amber-700" },
@@ -646,7 +666,7 @@ export default function App() {
           })}
         </section>
 
-        <section className="mb-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+        <section className="quick-add-panel mb-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
           <div className="grid gap-4 lg:grid-cols-[minmax(230px,0.75fr)_minmax(0,1.8fr)] lg:items-center">
             <div>
               <div className="flex items-center gap-2"><span className="grid size-9 place-items-center rounded-lg bg-blue-50 text-blue-700"><Plus size={18} /></span><h2 className="font-semibold text-slate-900">Add a job</h2></div>
@@ -664,7 +684,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="mb-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+        <section className="gmail-panel mb-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
           <div className="flex flex-col gap-4 border-b border-slate-100 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
             <div className="flex items-start gap-3">
               <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-rose-50 text-rose-700"><Mail size={19} /></span>
@@ -698,7 +718,7 @@ export default function App() {
           <p className="border-t border-slate-100 px-4 py-3 text-xs leading-5 text-slate-400 sm:px-5">Messages are read only. Only message metadata and a short preview are stored locally; full message bodies are processed in memory. Uncertain matches wait for your review.</p>
         </section>
 
-        <section className="mb-6">
+        <section className="review-panel mb-6">
           <PanelHeading title="Email review queue" count={reviewItems.length} description="Review uncertain matches before they change an application status." action={<Button size="small" onClick={async () => { await Promise.all([loadEmailStatus(), loadEmailReview()]); notify("Email queue refreshed."); }}><RefreshCw size={14} /> Refresh queue</Button>} />
           {reviewItems.length === 0 ? (
             <div className="rounded-xl border border-slate-200 bg-white"><EmptyState icon={Mail} title="No emails need review" description="Ambiguous or unmatched application emails will show here after a Gmail sync." /></div>
@@ -734,7 +754,7 @@ export default function App() {
           )}
         </section>
 
-        <section className="mb-6">
+        <section className="applications-panel mb-6">
           <PanelHeading title="Applications" count={jobs.length} description="Track each role, update status, and keep follow-ups visible." action={<div className="flex flex-wrap gap-2">
             <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={importCsv} />
             <Button onClick={() => fileInputRef.current?.click()}><ArrowUpFromLine size={15} /> Import CSV</Button>
@@ -813,7 +833,7 @@ export default function App() {
         </section>
 
         {currentTask && (
-          <section className="mb-6 rounded-xl border border-slate-200 bg-white shadow-sm">
+          <section className="activity-panel mb-6 rounded-xl border border-slate-200 bg-white shadow-sm">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-4 py-3.5 sm:px-5">
               <div className="flex items-center gap-2.5">
                 <span className="grid size-8 place-items-center rounded-lg bg-slate-100 text-slate-600"><Activity size={16} /></span>
@@ -826,7 +846,7 @@ export default function App() {
           </section>
         )}
 
-        <footer className="flex flex-col gap-2 border-t border-slate-200 py-5 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
+        <footer className="app-footer flex flex-col gap-2 border-t border-slate-200 py-5 text-xs text-slate-400 sm:flex-row sm:items-center sm:justify-between">
           <span>Job-Agent · Local-first application tracking</span>
           <span className="inline-flex items-center gap-1.5"><ShieldCheck size={13} /> SQLite · Local browser state · Backups before CSV import</span>
         </footer>
