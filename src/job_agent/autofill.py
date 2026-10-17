@@ -34,6 +34,8 @@ PROFILE_KEYS: dict[str, tuple[str, ...]] = {
     "github": ("github_url", "github"),
     "portfolio": ("portfolio_url", "portfolio", "website"),
     "address": ("address", "address_line_1"),
+    "address_line_2": ("address_line_2",),
+    "location": ("location",),
     "city": ("city",),
     "state": ("state", "province"),
     "zip": ("postal_code", "zip", "zip_code"),
@@ -48,6 +50,7 @@ PROFILE_KEYS: dict[str, tuple[str, ...]] = {
     "education_school": ("education.school", "education.0.school"),
     "education_degree": ("education.degree", "education.0.degree"),
     "education_field": ("education.field", "education.0.field"),
+    "gpa": ("education.gpa", "education.0.gpa"),
     "education_start_year": (
         "education.start_year",
         "education.0.start_year",
@@ -59,6 +62,9 @@ PROFILE_KEYS: dict[str, tuple[str, ...]] = {
         "requires_visa_sponsorship",
     ),
     "salary": ("expected_salary",),
+    "salary_currency": ("salary_currency",),
+    "skills": ("skills",),
+    "certifications": ("certifications",),
     "notice_period": ("notice_period",),
     "relocation": ("relocation", "willing_to_relocate"),
     "referral_source": ("referral_source",),
@@ -221,8 +227,25 @@ def _get_field_value(profile_data: dict[str, Any], field: str) -> Any:
     for path in PROFILE_KEYS.get(field, ()):
         value = _get_nested(profile_data, path)
         if _has_value(value):
-            if isinstance(value, list) and path == "skills":
-                return ", ".join(str(item) for item in value)
+            if isinstance(value, list) and path in {"skills", "certifications"}:
+                items: list[str] = []
+                for item in value:
+                    if isinstance(item, str):
+                        text = item.strip()
+                    elif isinstance(item, dict):
+                        text = next(
+                            (
+                                str(item[key]).strip()
+                                for key in ("name", "title", "certification", "certificate", "label")
+                                if _has_value(item.get(key))
+                            ),
+                            "",
+                        )
+                    else:
+                        text = str(item).strip()
+                    if text:
+                        items.append(text)
+                return ", ".join(items)
             return value
     return None
 
