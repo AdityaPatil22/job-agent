@@ -156,7 +156,7 @@ job-agent apply --job-id 1 --resume ai-engineer.pdf \
   --browser chrome --cdp-url http://127.0.0.1:9223
 ```
 
-Chrome mode opens a new tab for the application. If the CDP endpoint is not running, Job-Agent launches Chrome with a blank tab and waits for it to become ready before opening the job. If the portal redirects to sign-in, complete it in the visible Chrome window and return to the terminal when prompted. Job-Agent disconnects when it finishes but leaves Chrome, your profile and other tabs open. Review all fields and click the final Submit button yourself.
+Chrome mode opens a new tab for the job. If the CDP endpoint is not running, Job-Agent launches Chrome with a blank tab and waits for it to become ready. If the URL is a job-details page rather than an application form, Job-Agent can follow a clear Apply link when no form fields are detected. It will not click Submit or an ambiguous one-click Apply button. If the portal redirects to sign-in, complete login in the visible browser; if the Apply flow requires manual intervention, sign in/open the form and rerun autofill. Job-Agent disconnects when it finishes but leaves Chrome, its profile, and tabs open. Review all fields and click the final Submit button yourself.
 
 ### Important: this is a separate Chrome profile
 
@@ -168,7 +168,7 @@ Recent Chrome versions restrict remote debugging against the regular default use
 
 ### Login and application recovery
 
-Employer portals use different authentication and application flows. Complete sign-in, employer account creation, email verification, MFA, CAPTCHA and other user-only steps manually in the visible browser. Job-Agent does not bypass MFA/CAPTCHA and does not automatically submit applications. If a field or custom question is ambiguous, leave it for manual review.
+Employer portals use different authentication and application flows. Complete sign-in, employer account creation, email verification, MFA, CAPTCHA and other user-only steps manually in the visible browser. If Job-Agent reports that no application form was detected, the tracker status is left unchanged and the persistent Chrome tab stays open; open the application or sign in manually, then rerun autofill. Job-Agent does not bypass MFA/CAPTCHA and never clicks the final Submit action. If a field or custom question is ambiguous, leave it for manual review.
 
 ## 6. Connect Gmail for application status tracking
 
