@@ -370,7 +370,7 @@ export default function App() {
         const task = await api("/api/tasks/" + encodeURIComponent(currentTask.id));
         if (cancelled) return;
         setCurrentTask(task);
-        if (task.status !== "running") {
+        if (task.status !== "running" && task.status !== "stopping") {
           await refreshDashboard();
           notify(
             task.status === "succeeded"
