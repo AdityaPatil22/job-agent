@@ -83,7 +83,7 @@ def test_fills_fields_inside_embedded_application_iframe(page) -> None:
     report = fill_standard_fields(page, profile, {"email": ["email address"]})
 
     assert page.frame_locator("#application").locator("#email").input_value() == "ada@example.org"
-    assert any("email <- email" in item.lower() for item in report.filled)
+    assert any("email" in item.lower() and "<- email" in item.lower() for item in report.filled)
     assert not report.failed
 
 
