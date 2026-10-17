@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 from urllib.error import URLError
@@ -59,6 +60,39 @@ def is_cdp_available(cdp_url: str = DEFAULT_CDP_URL) -> bool:
             return 200 <= response.status < 300
     except (OSError, URLError, ValueError):
         return False
+
+
+def ensure_chrome_ready(
+    cdp_url: str = DEFAULT_CDP_URL,
+    *,
+    start_url: str = "https://accounts.google.com/",
+    timeout_seconds: float = 20.0,
+) -> bool:
+    """Connect to local Job-Agent Chrome or launch its persistent profile.
+
+    Returns True when Chrome was launched by this call and False when an
+    already-running endpoint was reused. Never connects to a non-local host.
+    """
+    endpoint = validate_cdp_url(cdp_url)
+    _validate_http_url(start_url, "Start URL")
+    if is_cdp_available(endpoint):
+        return False
+
+    parsed = urlparse(endpoint)
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    start_chrome(profile_dir=CHROME_PROFILE_DIR, port=port, url=start_url)
+
+    deadline = time.monotonic() + max(1.0, timeout_seconds)
+    while time.monotonic() < deadline:
+        if is_cdp_available(endpoint):
+            return True
+        time.sleep(0.25)
+
+    raise RuntimeError(
+        f"Chrome did not expose its debugging endpoint at {endpoint}. "
+        "Close any stale Job-Agent Chrome window and run 'job-agent browser' "
+        "to start the persistent profile, then retry autofill."
+    )
 
 
 def find_chrome_executable() -> Path:
@@ -233,7 +267,21 @@ class BrowserManager:
             # Some ATS pages keep network connections open; DOM is already ready.
             pass
         if self.is_login_page():
+            # Let the user complete SSO/MFA in the visible browser. Once they
+            # return, reopen the original application URL because many portals
+            # do not automatically resume the blocked navigation.
             self.handle_timeout()
+            if self.is_login_page():
+                page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=3_000)
+                except PlaywrightTimeoutError:
+                    pass
+            if self.is_login_page():
+                raise RuntimeError(
+                    "The career portal is still showing its login page. "
+                    "Finish sign-in in Chrome, then rerun autofill."
+                )
         return page
 
     def is_login_page(self) -> bool:
