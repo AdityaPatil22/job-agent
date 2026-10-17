@@ -23,6 +23,7 @@ def test_cdp_url_defaults_to_localhost() -> None:
     "url",
     [
         "https://example.com",
+        "https://127.0.0.1:9222",
         "http://192.168.1.20:9222",
         "http://example.com:9222",
         "file:///tmp/chrome",
