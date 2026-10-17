@@ -848,8 +848,12 @@ def _fill_standard_fields_in_context(
         "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], [contenteditable='true']"
     )
     seen_radio_groups: set[str] = set()
+    try:
+        field_count = fields.count()
+    except Exception:
+        return report
 
-    for index in range(fields.count()):
+    for index in range(field_count):
         element = fields.nth(index)
         try:
             if not element.is_visible() or not element.is_enabled():
@@ -1059,7 +1063,7 @@ def autofill_form(
     field_mappings: dict[str, list[str]] | None = None,
     max_pages: int = 8,
 ) -> FormGapReport:
-    """Upload a resume and fill recognized fields across a multi-page form."""
+    """Upload a resume and fill recognized fields across accessible form steps."""
     del job_id  # Reserved for future activity logging.
     if profile is None:
         profile = load_profile()
@@ -1072,19 +1076,23 @@ def autofill_form(
         resume_path = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
 
     report = FormGapReport()
-    if resume_path.is_file():
-        try:
-            report.resume_uploaded = upload_resume(page, resume_path)
-            if not report.resume_uploaded:
-                report.skipped.append("No recognizable resume upload field found")
-            else:
-                _wait_for_resume_processing(page)
-        except Exception as exc:
-            report.failed.append(f"Resume upload failed: {exc}")
-    else:
+    resume_exists = resume_path.is_file()
+    if not resume_exists:
         report.skipped.append(f"Resume file not found: {resume_path}")
 
-    for page_number in range(max(1, max_pages)):
+    page_limit = max(1, max_pages)
+    for page_number in range(page_limit):
+        # Some ATS place the resume upload on a later page or inside an iframe.
+        # Keep looking until it is actually uploaded, rather than giving up after
+        # the first screen.
+        if resume_exists and not report.resume_uploaded:
+            try:
+                report.resume_uploaded = upload_resume(page, resume_path)
+                if report.resume_uploaded:
+                    _wait_for_resume_processing(page)
+            except Exception as exc:
+                report.failed.append(f"Resume upload failed: {exc}")
+
         current = fill_standard_fields(page, profile, mappings)
         report.filled.extend(current.filled)
         report.skipped.extend(current.skipped)
@@ -1094,21 +1102,30 @@ def autofill_form(
         # Never click the final Submit/Apply button.
         if _has_submit_button(page):
             break
+
         next_button = _find_next_button(page)
         if next_button is None:
             break
+        if page_number == page_limit - 1:
+            report.skipped.append(f"Stopped at safety limit of {page_limit} pages")
+            break
+
+        previous_url = page.url
+        previous_snapshot = _visible_form_snapshot(page)
         try:
-            next_button.click()
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=5_000)
-            except PlaywrightTimeoutError:
-                pass
-            page.wait_for_timeout(500)
+            next_button.click(timeout=5_000)
+            if not _wait_for_form_progress(page, previous_url, previous_snapshot):
+                report.failed.append(
+                    "The Next/Continue control was clicked, but the form did not advance. "
+                    "Check required-field validation or continue this step manually."
+                )
+                break
         except Exception as exc:
             report.failed.append(f"Could not navigate to next page: {exc}")
             break
-        if page_number == max_pages - 1:
-            report.skipped.append(f"Stopped at safety limit of {max_pages} pages")
+
+    if resume_exists and not report.resume_uploaded:
+        report.skipped.append("No recognizable resume upload field found on the visited form pages")
 
     report.filled = list(dict.fromkeys(report.filled))
     report.skipped = list(dict.fromkeys(report.skipped))
