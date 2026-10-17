@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Frame, Page, TimeoutError as PlaywrightTimeoutError
 
 from .config import load_field_mappings, load_profile
 from .models import CandidateProfile, FormGapReport
@@ -71,7 +71,7 @@ SUBMIT_PATTERN = re.compile(
     r"^(submit|submit application|apply|apply now|send application|finish application)$",
     re.I,
 )
-NEXT_PATTERN = re.compile(r"^(next|continue|save and continue)$", re.I)
+NEXT_PATTERN = re.compile(r"\b(next|continue|proceed|save and continue|next step)\b", re.I)
 
 PLACEHOLDER_VALUES = {
     "",
@@ -107,10 +107,27 @@ def _normalize(value: Any) -> str:
 
 
 def _has_value(value: Any) -> bool:
+    """Return false for missing values and common untouched example-profile placeholders."""
     if value is None:
         return False
     if isinstance(value, str):
-        return bool(value.strip())
+        cleaned = value.strip()
+        if not cleaned:
+            return False
+        lowered = cleaned.lower()
+        placeholders = {
+            "null", "none", "n/a", "na", "not provided", "not specified",
+            "your full name", "your first name", "your last name",
+            "your current company", "your job title", "company name",
+            "school name", "university name", "yourusername",
+        }
+        if lowered in placeholders:
+            return False
+        if lowered.startswith(("your ", "replace with ", "insert your ", "enter your ", "sample ")):
+            return False
+        if "example.com" in lowered or "xxxxxxxx" in lowered:
+            return False
+        return True
     if isinstance(value, (list, dict, tuple, set)):
         return bool(value)
     # False and zero are meaningful configured answers.
@@ -205,6 +222,17 @@ def _get_field_value(profile_data: dict[str, Any], field: str) -> Any:
                 return ", ".join(str(item) for item in value)
             return value
     return None
+
+
+def _iter_search_contexts(target: Page | Frame) -> list[Page | Frame]:
+    """Return the main document and any embedded application frames."""
+    try:
+        contexts = list(target.frames)  # Page exposes frames; Frame does not.
+        if contexts:
+            return contexts
+    except Exception:
+        pass
+    return [target]
 
 
 def _label_candidates(element: Any) -> list[str]:
