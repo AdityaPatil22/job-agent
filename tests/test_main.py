@@ -49,6 +49,7 @@ def _patch_apply_dependencies(monkeypatch):
     monkeypatch.setattr(main, "BrowserManager", FakeBrowserManager)
     monkeypatch.setattr(main, "ensure_chrome_ready", Mock(return_value=False))
     monkeypatch.setattr(main, "autofill_form", Mock(return_value=FakeReport()))
+    monkeypatch.setattr(main, "prepare_application_page", Mock(side_effect=lambda page, _mappings: page))
     monkeypatch.setattr(main, "wait_for_submit_button", Mock())
     monkeypatch.setattr(main, "update_application_status", Mock())
 
