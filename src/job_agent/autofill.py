@@ -279,12 +279,12 @@ def _label_candidates(element: Any) -> list[str]:
                 if (fieldset) add(fieldset.querySelector('legend'));
                 const group = el.closest('[role="group"], [role="radiogroup"]');
                 if (group) {
-                    add(group);
                     const groupLabel = group.getAttribute('aria-label');
                     if (groupLabel) texts.push(groupLabel);
                     for (const id of (group.getAttribute('aria-labelledby') || '').split(/\s+/)) {
                         if (id) add(document.getElementById(id));
                     }
+                    add(group);
                 }
                 for (const id of (el.getAttribute('aria-labelledby') || '').split(/\\s+/)) {
                     if (id) add(document.getElementById(id));
