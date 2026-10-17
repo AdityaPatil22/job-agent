@@ -305,6 +305,7 @@ export default function App() {
   const [assistJob, setAssistJob] = useState(null);
   const [selectedResume, setSelectedResume] = useState("");
   const [browserMode, setBrowserMode] = useState("chrome");
+  const [startingAutofill, setStartingAutofill] = useState(false);
   const [toastMessage, setToastMessage] = useState(null);
   const [saving, setSaving] = useState(false);
   const fileInputRef = useRef(null);
@@ -497,8 +498,18 @@ export default function App() {
     const jobId = Number(assistJob.id);
     const resume = selectedResume;
     const mode = browserMode;
-    setAssistJob(null);
-    await startTask("/api/actions/apply", { job_id: jobId, resume, browser: mode }, "Assist with application");
+    setStartingAutofill(true);
+    try {
+      const started = await startTask(
+        "/api/actions/apply",
+        { job_id: jobId, resume, browser: mode },
+        "Assist with application",
+      );
+      // Keep the dialog and selections intact when the backend rejects the run.
+      if (started) setAssistJob(null);
+    } finally {
+      setStartingAutofill(false);
+    }
   };
 
   const exportCsv = async () => {
@@ -880,7 +891,7 @@ export default function App() {
           title="Prepare your application"
           description={"Job #" + assistJob.id + ": " + (assistJob.title || "Untitled role") + " — " + (assistJob.company || "Unknown company")}
           onClose={() => setAssistJob(null)}
-          footer={<><Button onClick={() => setAssistJob(null)}>Cancel</Button><Button variant="primary" onClick={() => document.getElementById("assist-form-submit").click()} disabled={!selectedResume}><Sparkles size={15} /> Run autofill</Button></>}
+          footer={<><Button onClick={() => setAssistJob(null)}>Cancel</Button><Button variant="primary" onClick={() => document.getElementById("assist-form-submit").click()} disabled={!selectedResume || startingAutofill}>{startingAutofill ? <LoaderCircle size={15} className="animate-spin" /> : <Sparkles size={15} />} {startingAutofill ? "Starting…" : "Run autofill"}</Button></>}
         >
           <form id="assist-form" onSubmit={beginApply} className="space-y-5">
             <SelectField label="Resume file" value={selectedResume} onChange={setSelectedResume} disabled={resumes.length === 0}>
