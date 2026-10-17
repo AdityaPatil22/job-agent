@@ -376,3 +376,21 @@ def test_does_not_click_apply_button_inside_a_form(page) -> None:
 
     assert prepared is page
     assert page.locator("body").get_attribute("data-apply-clicked") is None
+
+
+def test_does_not_click_ambiguous_one_click_apply_button(page) -> None:
+    page.set_content(
+        """
+        <button id="apply">Apply</button>
+        <script>
+          document.querySelector('#apply').addEventListener('click', () => {
+            document.body.dataset.applyClicked = 'true';
+          });
+        </script>
+        """
+    )
+
+    prepared = prepare_application_page(page, {})
+
+    assert prepared is page
+    assert page.locator("body").get_attribute("data-apply-clicked") is None
