@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import mimetypes
 import os
 import re
 import shlex
@@ -595,6 +596,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json(task if task else {"error": "Task not found."}, 200 if task else 404)
             return
 
+        # Prefer the built React/Vite app. The legacy static dashboard remains a
+        # fallback for source checkouts that have not built the frontend yet.
+        react_build_dir = STATIC_DIR / "react-build"
+        react_index = react_build_dir / "index.html"
+        if react_index.is_file() and path in {"/", "/index.html", "/gmail-setup.html"}:
+            self._send_bytes(react_index.read_bytes(), "text/html; charset=utf-8")
+            return
+        if react_index.is_file() and path.startswith("/assets/"):
+            build_root = react_build_dir.resolve()
+            asset_path = (react_build_dir / path.lstrip("/")).resolve()
+            if asset_path.is_relative_to(build_root) and asset_path.is_file():
+                content_type = mimetypes.guess_type(asset_path.name)[0] or "application/octet-stream"
+                self._send_bytes(asset_path.read_bytes(), f"{content_type}; charset=utf-8" if content_type.startswith(("text/", "application/javascript")) else content_type)
+                return
+            self._json({"error": "Not found."}, 404)
+            return
+
         static_files = {
             "/": ("index.html", "text/html; charset=utf-8"),
             "/gmail-setup.html": ("gmail-setup.html", "text/html; charset=utf-8"),
@@ -777,7 +795,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     raise ValueError("Select a resume file from the resumes/ directory.")
                 if resume not in _get_resumes():
                     raise ValueError(f"Resume file {resume!r} was not found in resumes/.")
-                result = TASKS.start("Assist with application", ["apply", "--job-id", str(job_id), "--resume", resume])
+                browser_mode = payload.get("browser", "managed")
+                if not isinstance(browser_mode, str) or browser_mode.lower() not in {"managed", "chrome"}:
+                    raise ValueError("Browser must be either 'managed' or 'chrome'.")
+                result = TASKS.start(
+                    "Assist with application",
+                    ["apply", "--job-id", str(job_id), "--resume", resume, "--browser", browser_mode.lower()],
+                )
                 self._json(result, 202)
                 return
 
