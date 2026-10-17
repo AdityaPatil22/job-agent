@@ -269,16 +269,14 @@ class BrowserManager:
             # Some ATS pages keep network connections open; DOM is already ready.
             pass
         if self.is_login_page():
-            # Let the user complete SSO/MFA in the visible browser. Once they
-            # return, reopen the original application URL because many portals
-            # do not automatically resume the blocked navigation.
+            # After SSO/MFA the portal may land on a home page instead of
+            # resuming the application. Always revisit the requested job URL.
             self.handle_timeout()
-            if self.is_login_page():
-                page.goto(url, wait_until="domcontentloaded", timeout=45_000)
-                try:
-                    page.wait_for_load_state("networkidle", timeout=3_000)
-                except PlaywrightTimeoutError:
-                    pass
+            page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+            try:
+                page.wait_for_load_state("networkidle", timeout=3_000)
+            except PlaywrightTimeoutError:
+                pass
             if self.is_login_page():
                 raise RuntimeError(
                     "The career portal is still showing its login page. "
