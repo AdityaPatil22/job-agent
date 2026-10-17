@@ -1285,7 +1285,7 @@ def _is_apply_cta(element: Any) -> bool:
         return bool(
             re.match(
                 r"^(apply now|apply for (this )?(job|role)|apply to (this )?(job|role)|"
-                r"start (your )?application|begin (your )?application|easy apply)(\\b|\\s)",
+                r"start (your )?application|begin (your )?application|easy apply)(\b|\s)",
                 text,
             )
         )
@@ -1336,7 +1336,6 @@ def prepare_application_page(
     # Prefer an explicit application link and only try one CTA. A human can
     # still start the workflow manually if the site uses an unsupported widget.
     element, target_url, _context = candidates[0]
-    original_url = page.url
     original_pages = set(page.context.pages)
     try:
         element.click(timeout=5_000)
@@ -1402,6 +1401,13 @@ def autofill_form(
         resume_path = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
 
     report = FormGapReport()
+    if not _looks_like_application_form(page, mappings):
+        report.skipped.append(
+            "No recognizable application form was found on this page. It may still be a job-details page, "
+            "or the application form may require a manual login/Apply step."
+        )
+        return report
+
     resume_exists = resume_path.is_file()
     if not resume_exists:
         report.skipped.append(f"Resume file not found: {resume_path}")
