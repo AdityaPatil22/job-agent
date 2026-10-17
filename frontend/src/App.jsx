@@ -125,7 +125,7 @@ function Button({ children, onClick, variant = "secondary", size = "normal", dis
   const base = "inline-flex items-center justify-center gap-2 rounded-lg border font-semibold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50";
   const sizes = size === "small" ? "min-h-8 px-2.5 text-xs" : "min-h-10 px-3.5 text-sm";
   const variants = {
-    primary: "border-blue-700 bg-blue-700 text-white shadow-sm hover:border-blue-800 hover:bg-blue-800",
+    primary: "border-[#5b75a8] bg-[#5b75a8] text-white shadow-sm hover:border-[#4d6799] hover:bg-[#4d6799]",
     secondary: "border-slate-200 bg-white text-slate-700 shadow-sm hover:bg-slate-50",
     ghost: "border-transparent bg-transparent text-slate-600 hover:bg-slate-100",
     danger: "border-rose-200 bg-white text-rose-700 hover:bg-rose-50",
