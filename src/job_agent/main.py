@@ -13,6 +13,7 @@ from .browser import (
     DEFAULT_CDP_PORT,
     DEFAULT_CDP_URL,
     BrowserManager,
+    ensure_chrome_ready,
     start_chrome,
 )
 from .config import ConfigError, load_profile
@@ -230,12 +231,18 @@ def apply_command(
 
     click.echo(f"Opening {job['title']} — {job['company']}")
     if browser_mode.lower() == "chrome":
-        click.echo("Attaching to your Job-Agent Chrome profile. Existing Chrome tabs will remain open.")
+        click.echo("Preparing the persistent Job-Agent Chrome profile. Existing Chrome tabs will remain open.")
     else:
         click.echo("Opening Job-Agent's managed Playwright browser. Login if needed and review every field manually.")
 
     manager: BrowserManager | None = None
     try:
+        if browser_mode.lower() == "chrome":
+            started = ensure_chrome_ready(cdp_url, start_url=job["url"])
+            if started:
+                click.echo(
+                    "Started Job-Agent Chrome. Sign in to the career portal in that window if prompted."
+                )
         manager = BrowserManager(headless=headless, mode=browser_mode.lower(), cdp_url=cdp_url)
         page = manager.goto(job["url"])
         report = autofill_form(page, job_id, resume_name, profile=profile, resumes_dir=RESUMES_DIR)
