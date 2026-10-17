@@ -258,23 +258,43 @@ def apply_command(
             field_mappings=field_mappings,
         )
         click.echo(report.render())
+        form_detected = not any(
+            "No recognizable application form was found" in item
+            for item in report.skipped
+        )
         if browser_mode.lower() == "managed":
             # Managed mode closes its context on exit, so allow a human review
-            # pause. Persistent Chrome mode must exit promptly: its application
-            # tab stays open and the dashboard can mark the task as completed.
-            wait_for_submit_button(page)
-        else:
+            # pause. Persistent Chrome mode stays open and must not block the
+            # dashboard task waiting for terminal input.
+            if form_detected:
+                wait_for_submit_button(page)
+            else:
+                input(
+                    "No application form was detected. Complete any manual login/navigation if needed, "
+                    "then press Enter to close this managed browser; rerun autofill afterward. "
+                )
+        elif form_detected:
             click.echo(
                 "\nAutofill finished. The Chrome tab will remain open for your review. "
                 "Complete any unanswered questions and submit the application yourself."
             )
-        update_application_status(
-            job_id,
-            "ready",
-            resume_used=Path(resume_name).stem,
-            notes="Form autofill completed; user review required. Not submitted by the tool.",
-        )
-        click.secho("Saved status as 'ready'. Submit the application yourself after reviewing the page.", fg="yellow")
+        else:
+            click.echo(
+                "\nNo application form was detected. The Chrome tab remains open. "
+                "Open the application or sign in manually, then run autofill again."
+            )
+
+        if form_detected:
+            update_application_status(
+                job_id,
+                "ready",
+                resume_used=Path(resume_name).stem,
+                notes="Form autofill completed; user review required. Not submitted by the tool.",
+            )
+            click.secho(
+                "Saved status as 'ready'. Submit the application yourself after reviewing the page.",
+                fg="yellow",
+            )
     except KeyboardInterrupt:
         click.echo("\nInterrupted. The browser window will remain open in Chrome mode.")
     except Exception as exc:
