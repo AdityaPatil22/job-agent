@@ -162,37 +162,40 @@ def _profile_data(profile: CandidateProfile) -> dict[str, Any]:
     data = profile.model_dump(mode="python")
 
     name = str(data.get("name") or data.get("full_name") or "").strip()
+    if not _has_value(name):
+        name = ""
     if not name:
-        name = " ".join(
+        parts = [
             str(data.get(key) or "").strip()
             for key in ("first_name", "middle_name", "last_name")
-            if str(data.get(key) or "").strip()
-        )
+            if _has_value(data.get(key))
+        ]
+        name = " ".join(parts)
 
     if name:
         data["name"] = name
         parts = name.split()
-        if not data.get("first_name") and parts:
+        if not _has_value(data.get("first_name")) and parts:
             data["first_name"] = parts[0]
-        if not data.get("last_name") and len(parts) > 1:
+        if not _has_value(data.get("last_name")) and len(parts) > 1:
             data["last_name"] = parts[-1]
-        if not data.get("middle_name") and len(parts) > 2:
+        if not _has_value(data.get("middle_name")) and len(parts) > 2:
             data["middle_name"] = " ".join(parts[1:-1])
 
     location = str(data.get("location") or "").strip()
-    if location and "," in location:
+    if _has_value(location) and "," in location:
         parts = [part.strip() for part in location.split(",") if part.strip()]
         if len(parts) >= 2:
-            if not data.get("city"):
+            if not _has_value(data.get("city")):
                 data["city"] = parts[0]
-            if not data.get("state"):
+            if not _has_value(data.get("state")):
                 data["state"] = parts[1]
-            if len(parts) >= 3 and not data.get("country"):
+            if len(parts) >= 3 and not _has_value(data.get("country")):
                 data["country"] = parts[-1]
 
-    if not data.get("postal_code") and data.get("zip"):
+    if not _has_value(data.get("postal_code")) and _has_value(data.get("zip")):
         data["postal_code"] = data["zip"]
-    if not data.get("zip") and data.get("postal_code"):
+    if not _has_value(data.get("zip")) and _has_value(data.get("postal_code")):
         data["zip"] = data["postal_code"]
 
     if not _has_value(data.get("visa_sponsorship")):
@@ -205,9 +208,9 @@ def _profile_data(profile: CandidateProfile) -> dict[str, Any]:
     experiences = data.get("experience") or []
     if experiences and isinstance(experiences[0], dict):
         first_experience = experiences[0]
-        if not data.get("current_company"):
+        if not _has_value(data.get("current_company")):
             data["current_company"] = first_experience.get("company", "")
-        if not data.get("current_title"):
+        if not _has_value(data.get("current_title")):
             data["current_title"] = first_experience.get("title", "")
 
     return data
