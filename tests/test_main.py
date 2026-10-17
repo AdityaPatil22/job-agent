@@ -84,3 +84,25 @@ def test_managed_autofill_keeps_review_pause(monkeypatch) -> None:
     main.ensure_chrome_ready.assert_not_called()
     main.wait_for_submit_button.assert_called_once()
     main.update_application_status.assert_called_once()
+
+
+class FakeNoFormReport(FakeReport):
+    skipped = [
+        "No recognizable application form was found on this page. It may still be a job-details page."
+    ]
+
+
+def test_chrome_run_does_not_mark_job_ready_when_no_form_is_found(monkeypatch) -> None:
+    _patch_apply_dependencies(monkeypatch)
+    main.autofill_form.return_value = FakeNoFormReport()
+    runner = CliRunner()
+
+    result = runner.invoke(
+        main.cli,
+        ["apply", "--job-id", "7", "--resume", "candidate.pdf", "--browser", "chrome"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "No application form was detected" in result.output
+    main.update_application_status.assert_not_called()
+    main.wait_for_submit_button.assert_not_called()
