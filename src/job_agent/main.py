@@ -7,7 +7,7 @@ from pathlib import Path
 
 import click
 
-from .autofill import autofill_form, wait_for_submit_button
+from .autofill import autofill_form, prepare_application_page, wait_for_submit_button
 from .browser import (
     CHROME_PROFILE_DIR,
     DEFAULT_CDP_PORT,
@@ -248,6 +248,7 @@ def apply_command(
                 )
         manager = BrowserManager(headless=headless, mode=browser_mode.lower(), cdp_url=cdp_url)
         page = manager.goto(job["url"])
+        page = prepare_application_page(page, field_mappings)
         report = autofill_form(
             page,
             job_id,
