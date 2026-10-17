@@ -264,7 +264,7 @@ def apply_command(
             wait_for_submit_button(page)
         else:
             click.echo(
-                "\\nAutofill finished. The Chrome tab will remain open for your review. "
+                "\nAutofill finished. The Chrome tab will remain open for your review. "
                 "Complete any unanswered questions and submit the application yourself."
             )
         update_application_status(
