@@ -15,6 +15,7 @@ from job_agent.autofill import (
     _has_submit_button,
     autofill_form,
     fill_standard_fields,
+    prepare_application_page,
     upload_resume,
 )
 from job_agent.models import CandidateProfile
@@ -327,3 +328,51 @@ def test_handles_custom_aria_radio_group(page) -> None:
     assert page.locator("#authorized-no").get_attribute("aria-checked") == "false"
     assert any("work authorization <- work_authorization" in item.lower() for item in report.filled)
     assert not report.failed
+
+
+def test_opens_apply_link_when_job_details_page_has_no_form(page) -> None:
+    page.set_content(
+        """
+        <a id="apply" href="#application">Apply now</a>
+        <div id="application" hidden>
+          <label for="first_name">First name</label>
+          <input id="first_name" name="first_name">
+          <label for="email">Email address</label>
+          <input id="email" name="email">
+        </div>
+        <script>
+          document.querySelector('#apply').addEventListener('click', event => {
+            event.preventDefault();
+            document.querySelector('#application').hidden = false;
+          });
+        </script>
+        """
+    )
+
+    prepared = prepare_application_page(page, {"first_name": ["first name"], "email": ["email address"]})
+
+    assert prepared is page
+    assert page.locator("#first_name").is_visible()
+    assert page.locator("#email").is_visible()
+
+
+def test_does_not_click_apply_button_inside_a_form(page) -> None:
+    page.set_content(
+        """
+        <form id="newsletter">
+          <label for="newsletter-email">Email address</label>
+          <input id="newsletter-email" name="email">
+          <button id="apply" type="button">Apply now</button>
+        </form>
+        <script>
+          document.querySelector('#apply').addEventListener('click', () => {
+            document.body.dataset.applyClicked = 'true';
+          });
+        </script>
+        """
+    )
+
+    prepared = prepare_application_page(page, {"email": ["email address"]})
+
+    assert prepared is page
+    assert page.locator("body").get_attribute("data-apply-clicked") is None
