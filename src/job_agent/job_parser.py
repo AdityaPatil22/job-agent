@@ -214,7 +214,8 @@ def _infer_title_from_url(url: str) -> str:
             continue
         if re.fullmatch(r"[0-9a-f-]{12,}", candidate) or candidate.startswith("job."):
             continue
-        candidate = re.sub(r"[-_.]?[0-9a-f]{8,}$", "", part, flags=re.IGNORECASE).strip("-_. ")
+        candidate = re.sub(r"(?:-[0-9a-f]{4,}){1,5}$", "", part, flags=re.IGNORECASE)
+        candidate = re.sub(r"[-_.]?[0-9a-f]{8,}$", "", candidate, flags=re.IGNORECASE).strip("-_. ")
         if len(candidate) < 4 or not re.search(r"[-_ ]", candidate):
             continue
         return re.sub(r"[-_]+", " ", candidate).strip().title()
