@@ -596,38 +596,32 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._json(task if task else {"error": "Task not found."}, 200 if task else 404)
             return
 
-        # Prefer the built React/Vite app. The legacy static dashboard remains a
-        # fallback for source checkouts that have not built the frontend yet.
+        # The production dashboard is the built React/Vite frontend.
         react_build_dir = STATIC_DIR / "react-build"
         react_index = react_build_dir / "index.html"
-        if react_index.is_file() and path in {"/", "/index.html", "/gmail-setup.html"}:
-            self._send_bytes(react_index.read_bytes(), "text/html; charset=utf-8")
+        if path in {"/", "/index.html", "/gmail-setup.html"}:
+            if react_index.is_file():
+                self._send_bytes(react_index.read_bytes(), "text/html; charset=utf-8")
+            else:
+                body = (
+                    "<!doctype html><html lang='en'><meta charset='utf-8'>"
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+                    "<title>Build Job-Agent UI</title><h1>React frontend not built</h1>"
+                    "<p>Run <code>cd frontend && npm install && npm run build</code> "
+                    "from the repository root, then reload this page.</p></html>"
+                ).encode("utf-8")
+                self._send_bytes(body, "text/html; charset=utf-8", 503)
             return
-        if react_index.is_file() and path.startswith("/assets/"):
+        if path.startswith("/assets/"):
             build_root = react_build_dir.resolve()
             asset_path = (react_build_dir / path.lstrip("/")).resolve()
             if asset_path.is_relative_to(build_root) and asset_path.is_file():
                 content_type = mimetypes.guess_type(asset_path.name)[0] or "application/octet-stream"
-                self._send_bytes(asset_path.read_bytes(), f"{content_type}; charset=utf-8" if content_type.startswith(("text/", "application/javascript")) else content_type)
+                if content_type.startswith(("text/", "application/javascript")):
+                    content_type += "; charset=utf-8"
+                self._send_bytes(asset_path.read_bytes(), content_type)
                 return
             self._json({"error": "Not found."}, 404)
-            return
-
-        static_files = {
-            "/": ("index.html", "text/html; charset=utf-8"),
-            "/gmail-setup.html": ("gmail-setup.html", "text/html; charset=utf-8"),
-            "/index.html": ("index.html", "text/html; charset=utf-8"),
-            "/styles.css": ("styles.css", "text/css; charset=utf-8"),
-            "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-        }
-        static_entry = static_files.get(path)
-        if static_entry:
-            filename, content_type = static_entry
-            file_path = STATIC_DIR / filename
-            try:
-                self._send_bytes(file_path.read_bytes(), content_type)
-            except OSError:
-                self._json({"error": f"Dashboard asset missing: {filename}"}, 500)
             return
         self._json({"error": "Not found."}, 404)
 
