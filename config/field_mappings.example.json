@@ -85,10 +85,22 @@
     "address",
     "street address",
     "address line 1",
-    "address line 2",
     "home address",
     "mailing address",
     "residential address"
+  ],
+  "address_line_2": [
+    "address line 2",
+    "apartment",
+    "unit",
+    "suite",
+    "apt number"
+  ],
+  "location": [
+    "location",
+    "current location",
+    "location of residence",
+    "where are you located"
   ],
   "city": [
     "city",
@@ -171,6 +183,12 @@
     "education level",
     "highest degree"
   ],
+  "gpa": [
+    "GPA",
+    "grade point average",
+    "cumulative GPA",
+    "overall GPA"
+  ],
   "education_field": [
     "field of study",
     "major",
@@ -236,6 +254,23 @@
     "salary expectation",
     "compensation expectation",
     "expected compensation"
+  ],
+  "salary_currency": [
+    "salary currency",
+    "currency",
+    "compensation currency"
+  ],
+  "skills": [
+    "skills",
+    "technical skills",
+    "skill set",
+    "key skills"
+  ],
+  "certifications": [
+    "certifications",
+    "certificates",
+    "professional certifications",
+    "licenses and certifications"
   ],
   "notice_period": [
     "notice period",

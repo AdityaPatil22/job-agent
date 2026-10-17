@@ -7,9 +7,16 @@ from pathlib import Path
 
 import click
 
-from .autofill import autofill_form, wait_for_submit_button
-from .browser import BrowserManager
-from .config import ConfigError, load_profile
+from .autofill import autofill_form, prepare_application_page, wait_for_submit_button
+from .browser import (
+    CHROME_PROFILE_DIR,
+    DEFAULT_CDP_PORT,
+    DEFAULT_CDP_URL,
+    BrowserManager,
+    ensure_chrome_ready,
+    start_chrome,
+)
+from .config import ConfigError, load_field_mappings, load_profile
 from .database import (
     add_job,
     export_csv,
@@ -53,13 +60,46 @@ def cli() -> None:
 )
 def start_command(host: str, port: int) -> None:
     """Start the local web dashboard."""
-    # Import lazily so non-dashboard CLI commands do not load HTTP server code.
     from .dashboard import serve
 
     try:
         serve(host=host, port=port)
     except (OSError, ValueError) as exc:
         raise click.ClickException(f"Could not start dashboard: {exc}") from exc
+
+
+@cli.command("browser")
+@click.option(
+    "--port",
+    type=click.IntRange(min=1, max=65535),
+    default=DEFAULT_CDP_PORT,
+    show_default=True,
+    help="Local Chrome DevTools Protocol port.",
+)
+@click.option(
+    "--url",
+    default="https://accounts.google.com/",
+    show_default=True,
+    help="Page to open in the new Job-Agent Chrome profile.",
+)
+def browser_command(port: int, url: str) -> None:
+    """Launch a dedicated persistent Google Chrome profile for Job-Agent."""
+    try:
+        started = start_chrome(profile_dir=CHROME_PROFILE_DIR, port=port, url=url)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if started:
+        click.secho("Started Google Chrome with the Job-Agent profile.", fg="green")
+        click.echo(f"Profile: {CHROME_PROFILE_DIR}")
+        click.echo(f"Local debugging endpoint: http://127.0.0.1:{port}")
+        click.echo(
+            "Sign in to Google and your career portals in this Chrome window once. "
+            "Job-Agent will reuse this profile on later runs."
+        )
+    else:
+        click.echo(f"Chrome is already listening on http://127.0.0.1:{port}.")
+        click.echo("Use that Chrome window to sign in, then run apply with --browser chrome.")
 
 
 @cli.command("email-connect")
@@ -155,33 +195,110 @@ def jobs_command(status: str | None) -> None:
 @cli.command("apply")
 @click.option("--job-id", type=click.IntRange(min=1), required=True)
 @click.option("--resume", "resume_name", required=True, help="Resume filename or basename in resumes/.")
-@click.option("--headless", is_flag=True, help="Run Chromium without a visible window (not recommended).")
-def apply_command(job_id: int, resume_name: str, headless: bool) -> None:
+@click.option("--headless", is_flag=True, help="Run managed Chromium without a visible window (not recommended).")
+@click.option(
+    "--browser",
+    "browser_mode",
+    type=click.Choice(["managed", "chrome"], case_sensitive=False),
+    default="managed",
+    show_default=True,
+    help="Use Job-Agent's Playwright browser or attach to Chrome started with 'job-agent browser'.",
+)
+@click.option(
+    "--cdp-url",
+    default=DEFAULT_CDP_URL,
+    show_default=True,
+    help="Local Chrome DevTools endpoint for --browser chrome.",
+)
+def apply_command(
+    job_id: int,
+    resume_name: str,
+    headless: bool,
+    browser_mode: str,
+    cdp_url: str,
+) -> None:
     """Open a tracked job, upload a resume, and assist with form filling."""
     job = get_job(job_id)
     if job is None:
         raise click.ClickException(f"Job #{job_id} was not found. Run 'job-agent jobs' to list jobs.")
     try:
+        # Validate both local config files before opening a browser so a missing
+        # mapping file cannot look like a silent autofill failure.
         profile = load_profile()
+        field_mappings = load_field_mappings()
     except ConfigError as exc:
         raise click.ClickException(str(exc)) from exc
+
+    if browser_mode.lower() == "chrome" and headless:
+        raise click.ClickException("--headless cannot be used with --browser chrome.")
+
     click.echo(f"Opening {job['title']} — {job['company']}")
-    click.echo("A browser will open. Login if needed and review every field manually.")
-    manager = BrowserManager(headless=headless)
+    if browser_mode.lower() == "chrome":
+        click.echo("Preparing the persistent Job-Agent Chrome profile. Existing Chrome tabs will remain open.")
+    else:
+        click.echo("Opening Job-Agent's managed Playwright browser. Login if needed and review every field manually.")
+
+    manager: BrowserManager | None = None
     try:
+        if browser_mode.lower() == "chrome":
+            started = ensure_chrome_ready(cdp_url)
+            if started:
+                click.echo(
+                    "Started Job-Agent Chrome. Sign in to the career portal in that window if prompted."
+                )
+        manager = BrowserManager(headless=headless, mode=browser_mode.lower(), cdp_url=cdp_url)
         page = manager.goto(job["url"])
-        report = autofill_form(page, job_id, resume_name, profile=profile, resumes_dir=RESUMES_DIR)
+        page = prepare_application_page(page, field_mappings)
+        report = autofill_form(
+            page,
+            job_id,
+            resume_name,
+            profile=profile,
+            resumes_dir=RESUMES_DIR,
+            field_mappings=field_mappings,
+        )
         click.echo(report.render())
-        wait_for_submit_button(page)
-        update_application_status(job_id, "ready", resume_used=Path(resume_name).stem,
-                                  notes="Form autofill completed; user review required. Not submitted by the tool.")
-        click.secho("Saved status as 'ready'. Submit the application yourself after reviewing the page.", fg="yellow")
+        form_detected = bool(getattr(report, "application_form_detected", True))
+        if browser_mode.lower() == "managed":
+            # Managed mode closes its context on exit, so allow a human review
+            # pause. Persistent Chrome mode stays open and must not block the
+            # dashboard task waiting for terminal input.
+            if form_detected:
+                wait_for_submit_button(page)
+            else:
+                input(
+                    "No application form was detected. Complete any manual login/navigation if needed, "
+                    "then press Enter to close this managed browser; rerun autofill afterward. "
+                )
+        elif form_detected:
+            click.echo(
+                "\nAutofill finished. The Chrome tab will remain open for your review. "
+                "Complete any unanswered questions and submit the application yourself."
+            )
+        else:
+            click.echo(
+                "\nNo application form was detected. The Chrome tab remains open. "
+                "Open the application or sign in manually, then run autofill again."
+            )
+
+        if form_detected:
+            update_application_status(
+                job_id,
+                "ready",
+                resume_used=Path(resume_name).stem,
+                notes="Form autofill completed; user review required. Not submitted by the tool.",
+            )
+            click.secho(
+                "Saved status as 'ready'. Submit the application yourself after reviewing the page.",
+                fg="yellow",
+            )
     except KeyboardInterrupt:
-        click.echo("\nInterrupted. The browser session will close.")
+        click.echo("\nInterrupted. The browser window will remain open in Chrome mode.")
     except Exception as exc:
         raise click.ClickException(f"Application assistance failed: {exc}") from exc
     finally:
-        manager.close()
+        if manager is not None:
+            manager.close()
 
 
 @cli.command("mark-applied")
@@ -198,7 +315,7 @@ def mark_applied_command(job_id: int, notes: str | None) -> None:
 @cli.command("status")
 @click.option("--job-id", type=click.IntRange(min=1), required=True)
 def status_command(job_id: int) -> None:
-    """Show details and tracking status for a job."""
+    """Show details for a job and its application status."""
     job = get_job(job_id)
     if job is None:
         raise click.ClickException(f"Job #{job_id} was not found.")

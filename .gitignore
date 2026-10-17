@@ -220,11 +220,15 @@ __marimo__/
 .streamlit/secrets.toml
 
 # Job-Agent project files and personal application data
+frontend/node_modules/
+frontend/dist/
+src/job_agent/static/react-build/
 data/jobs.db
 data/jobs.db-*
 data/backups/
 data/*.csv
 data/chromium_profile/
+data/chrome_profile/
 config/profile.json
 config/preferences.json
 config/field_mappings.json

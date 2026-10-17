@@ -148,6 +148,7 @@ class Application(BaseModel):
 class FormGapReport(BaseModel):
     """Summary of fields handled during a form autofill run."""
 
+    application_form_detected: bool = True
     filled: list[str] = Field(default_factory=list)
     skipped: list[str] = Field(default_factory=list)
     failed: list[str] = Field(default_factory=list)
@@ -156,7 +157,9 @@ class FormGapReport(BaseModel):
 
     def render(self) -> str:
         lines = ["Form review report:"]
-
+        lines.append(
+            f"  Application form detected: {'yes' if self.application_form_detected else 'no'}"
+        )
         lines.append(
             f"  Filled ({len(self.filled)}): "
             f"{', '.join(self.filled) or 'none'}"

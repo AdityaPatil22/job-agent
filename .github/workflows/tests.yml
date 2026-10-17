@@ -31,7 +31,22 @@ jobs:
       - name: Install Chromium for form tests
         run: python -m playwright install --with-deps chromium
 
-      - name: Check dashboard JavaScript syntax
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install and build React frontend
+        working-directory: frontend
+        run: |
+          npm install
+          npm run build
+
+      - name: Run frontend task-state tests
+        working-directory: frontend
+        run: npm test
+
+      - name: Check legacy dashboard JavaScript syntax
         run: node --check src/job_agent/static/app.js
 
       - name: Compile Python files

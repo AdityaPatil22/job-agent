@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Frame, Page, TimeoutError as PlaywrightTimeoutError
 
 from .config import load_field_mappings, load_profile
 from .models import CandidateProfile, FormGapReport
@@ -34,6 +34,8 @@ PROFILE_KEYS: dict[str, tuple[str, ...]] = {
     "github": ("github_url", "github"),
     "portfolio": ("portfolio_url", "portfolio", "website"),
     "address": ("address", "address_line_1"),
+    "address_line_2": ("address_line_2",),
+    "location": ("location",),
     "city": ("city",),
     "state": ("state", "province"),
     "zip": ("postal_code", "zip", "zip_code"),
@@ -48,6 +50,7 @@ PROFILE_KEYS: dict[str, tuple[str, ...]] = {
     "education_school": ("education.school", "education.0.school"),
     "education_degree": ("education.degree", "education.0.degree"),
     "education_field": ("education.field", "education.0.field"),
+    "gpa": ("education.gpa", "education.0.gpa"),
     "education_start_year": (
         "education.start_year",
         "education.0.start_year",
@@ -59,6 +62,9 @@ PROFILE_KEYS: dict[str, tuple[str, ...]] = {
         "requires_visa_sponsorship",
     ),
     "salary": ("expected_salary",),
+    "salary_currency": ("salary_currency",),
+    "skills": ("skills",),
+    "certifications": ("certifications",),
     "notice_period": ("notice_period",),
     "relocation": ("relocation", "willing_to_relocate"),
     "referral_source": ("referral_source",),
@@ -71,7 +77,20 @@ SUBMIT_PATTERN = re.compile(
     r"^(submit|submit application|apply|apply now|send application|finish application)$",
     re.I,
 )
-NEXT_PATTERN = re.compile(r"^(next|continue|save and continue)$", re.I)
+NEXT_PATTERN = re.compile(r"\b(next|continue|proceed|save and continue|next step)\b", re.I)
+APPLY_CTA_PATTERN = re.compile(
+    r"^(apply|apply now|apply (for|to) .+|"
+    r"start (your )?application|begin (your )?application|easy apply|"
+    r"continue to application|apply externally|apply on company site)$",
+    re.I,
+)
+APPLICATION_SIGNAL_FIELDS = {
+    "full_name", "first_name", "last_name", "email", "phone", "country_code",
+    "linkedin", "github", "portfolio", "address", "address_line_2",
+    "work_authorization", "visa_sponsorship", "relocation",
+    "education_school", "education_degree", "education_field", "resume",
+}
+LOGIN_HINTS = ("login", "signin", "sign-in", "authenticate", "session-expired")
 
 PLACEHOLDER_VALUES = {
     "",
@@ -107,10 +126,27 @@ def _normalize(value: Any) -> str:
 
 
 def _has_value(value: Any) -> bool:
+    """Return false for missing values and common untouched example-profile placeholders."""
     if value is None:
         return False
     if isinstance(value, str):
-        return bool(value.strip())
+        cleaned = value.strip()
+        if not cleaned:
+            return False
+        lowered = cleaned.lower()
+        placeholders = {
+            "null", "none", "n/a", "na", "not provided", "not specified",
+            "your full name", "your first name", "your last name",
+            "your current company", "your job title", "company name",
+            "school name", "university name", "yourusername",
+        }
+        if lowered in placeholders:
+            return False
+        if lowered.startswith(("your ", "replace with ", "insert your ", "enter your ", "sample ")):
+            return False
+        if "example.com" in lowered or "xxxxxxxx" in lowered:
+            return False
+        return True
     if isinstance(value, (list, dict, tuple, set)):
         return bool(value)
     # False and zero are meaningful configured answers.
@@ -145,37 +181,40 @@ def _profile_data(profile: CandidateProfile) -> dict[str, Any]:
     data = profile.model_dump(mode="python")
 
     name = str(data.get("name") or data.get("full_name") or "").strip()
+    if not _has_value(name):
+        name = ""
     if not name:
-        name = " ".join(
+        parts = [
             str(data.get(key) or "").strip()
             for key in ("first_name", "middle_name", "last_name")
-            if str(data.get(key) or "").strip()
-        )
+            if _has_value(data.get(key))
+        ]
+        name = " ".join(parts)
 
     if name:
         data["name"] = name
         parts = name.split()
-        if not data.get("first_name") and parts:
+        if not _has_value(data.get("first_name")) and parts:
             data["first_name"] = parts[0]
-        if not data.get("last_name") and len(parts) > 1:
+        if not _has_value(data.get("last_name")) and len(parts) > 1:
             data["last_name"] = parts[-1]
-        if not data.get("middle_name") and len(parts) > 2:
+        if not _has_value(data.get("middle_name")) and len(parts) > 2:
             data["middle_name"] = " ".join(parts[1:-1])
 
     location = str(data.get("location") or "").strip()
-    if location and "," in location:
+    if _has_value(location) and "," in location:
         parts = [part.strip() for part in location.split(",") if part.strip()]
         if len(parts) >= 2:
-            if not data.get("city"):
+            if not _has_value(data.get("city")):
                 data["city"] = parts[0]
-            if not data.get("state"):
+            if not _has_value(data.get("state")):
                 data["state"] = parts[1]
-            if len(parts) >= 3 and not data.get("country"):
+            if len(parts) >= 3 and not _has_value(data.get("country")):
                 data["country"] = parts[-1]
 
-    if not data.get("postal_code") and data.get("zip"):
+    if not _has_value(data.get("postal_code")) and _has_value(data.get("zip")):
         data["postal_code"] = data["zip"]
-    if not data.get("zip") and data.get("postal_code"):
+    if not _has_value(data.get("zip")) and _has_value(data.get("postal_code")):
         data["zip"] = data["postal_code"]
 
     if not _has_value(data.get("visa_sponsorship")):
@@ -188,9 +227,9 @@ def _profile_data(profile: CandidateProfile) -> dict[str, Any]:
     experiences = data.get("experience") or []
     if experiences and isinstance(experiences[0], dict):
         first_experience = experiences[0]
-        if not data.get("current_company"):
+        if not _has_value(data.get("current_company")):
             data["current_company"] = first_experience.get("company", "")
-        if not data.get("current_title"):
+        if not _has_value(data.get("current_title")):
             data["current_title"] = first_experience.get("title", "")
 
     return data
@@ -201,10 +240,38 @@ def _get_field_value(profile_data: dict[str, Any], field: str) -> Any:
     for path in PROFILE_KEYS.get(field, ()):
         value = _get_nested(profile_data, path)
         if _has_value(value):
-            if isinstance(value, list) and path == "skills":
-                return ", ".join(str(item) for item in value)
+            if isinstance(value, list) and path in {"skills", "certifications"}:
+                items: list[str] = []
+                for item in value:
+                    if isinstance(item, str):
+                        text = item.strip()
+                    elif isinstance(item, dict):
+                        text = next(
+                            (
+                                str(item[key]).strip()
+                                for key in ("name", "title", "certification", "certificate", "label")
+                                if _has_value(item.get(key))
+                            ),
+                            "",
+                        )
+                    else:
+                        text = str(item).strip()
+                    if text:
+                        items.append(text)
+                return ", ".join(items)
             return value
     return None
+
+
+def _iter_search_contexts(target: Page | Frame) -> list[Page | Frame]:
+    """Return the main document and any embedded application frames."""
+    try:
+        contexts = list(target.frames)  # Page exposes frames; Frame does not.
+        if contexts:
+            return contexts
+    except Exception:
+        pass
+    return [target]
 
 
 def _label_candidates(element: Any) -> list[str]:
@@ -224,7 +291,14 @@ def _label_candidates(element: Any) -> list[str]:
                 const fieldset = el.closest('fieldset');
                 if (fieldset) add(fieldset.querySelector('legend'));
                 const group = el.closest('[role="group"], [role="radiogroup"]');
-                if (group) add(group);
+                if (group) {
+                    const groupLabel = group.getAttribute('aria-label');
+                    if (groupLabel) texts.push(groupLabel);
+                    for (const id of (group.getAttribute('aria-labelledby') || '').split(/\s+/)) {
+                        if (id) add(document.getElementById(id));
+                    }
+                    add(group);
+                }
                 for (const id of (el.getAttribute('aria-labelledby') || '').split(/\\s+/)) {
                     if (id) add(document.getElementById(id));
                 }
@@ -367,51 +441,67 @@ def _is_custom_combobox(element: Any, tag: str) -> bool:
         return False
 
 
-def detect_resume_upload(page: Page) -> Any | None:
-    """Find a file input likely to accept a resume or CV."""
-    inputs = page.locator('input[type="file"]')
-    ranked: list[tuple[int, Any]] = []
-    for index in range(inputs.count()):
-        element = inputs.nth(index)
+def detect_resume_upload(page: Page | Frame) -> Any | None:
+    """Find a likely resume input across the main page and embedded frames."""
+    ranked: list[tuple[int, int, Any]] = []
+    order = 0
+    for context in _iter_search_contexts(page):
         try:
-            attributes = " ".join(
-                element.get_attribute(attr) or ""
-                for attr in ("id", "name", "accept", "aria-label", "title", "data-testid")
-            )
-            parent_text = ""
-            try:
-                parent = element.locator(
-                    "xpath=ancestor::*[self::label or self::div or self::section][1]"
-                )
-                if parent.count():
-                    parent_text = parent.first.inner_text(timeout=500)
-            except Exception:
-                pass
-            context = _normalize(attributes + " " + parent_text)
-            score = 0
-            if any(_normalize(word) in context for word in RESUME_WORDS):
-                score += 10
-            if any(_normalize(word) in context for word in UPLOAD_WORDS):
-                score += 3
-            if "cover letter" in context and "resume" not in context:
-                score -= 10
-            ranked.append((score, element))
+            inputs = context.locator('input[type="file"]')
+            count = inputs.count()
         except Exception:
             continue
+        for index in range(count):
+            element = inputs.nth(index)
+            try:
+                attributes = " ".join(
+                    element.get_attribute(attr) or ""
+                    for attr in (
+                        "id", "name", "accept", "aria-label", "title",
+                        "data-testid", "data-qa", "data-field",
+                    )
+                )
+                # Associated label and surrounding field copy catch many ATS
+                # implementations whose file input itself has no useful name.
+                label_text = " ".join(_label_candidates(element))
+                parent_text = ""
+                try:
+                    parent = element.locator(
+                        "xpath=ancestor::*[self::label or self::div or self::section][1]"
+                    )
+                    if parent.count():
+                        parent_text = parent.first.inner_text(timeout=500)
+                except Exception:
+                    pass
+                context_text = _normalize(attributes + " " + label_text + " " + parent_text)
+                score = 0
+                if any(_normalize(word) in context_text for word in RESUME_WORDS):
+                    score += 10
+                if any(_normalize(word) in context_text for word in UPLOAD_WORDS):
+                    score += 3
+                if "cover letter" in context_text and not any(
+                    _normalize(word) in context_text for word in RESUME_WORDS
+                ):
+                    score = -10
+                if score >= 0:
+                    ranked.append((score, order, element))
+                order += 1
+            except Exception:
+                order += 1
+                continue
 
     if not ranked:
         return None
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    if ranked[0][0] > 0:
-        # Don't guess when multiple unlabelled file inputs are present.
-        top_score = ranked[0][0]
-        if top_score == 0:
-            return None
-        return ranked[0][1]
-    return ranked[0][1] if len(ranked) == 1 else None
+    highest = max(item[0] for item in ranked)
+    winners = [item for item in ranked if item[0] == highest]
+    # A specific label can disambiguate among several file inputs. Never guess
+    # between equally plausible resume fields or unrelated unlabelled uploads.
+    if highest > 0:
+        return winners[0][2] if len(winners) == 1 else None
+    return ranked[0][2] if len(ranked) == 1 else None
 
 
-def upload_resume(page: Page, resume_path: str | Path) -> bool:
+def upload_resume(page: Page | Frame, resume_path: str | Path) -> bool:
     """Upload a resume through the detected file input."""
     path = Path(resume_path).expanduser().resolve()
     if not path.is_file():
@@ -427,34 +517,78 @@ def upload_resume(page: Page, resume_path: str | Path) -> bool:
     return True
 
 
-def _visible_form_snapshot(page: Page) -> tuple[tuple[str, str], ...]:
-    """Capture visible native values to detect asynchronous resume parsing."""
+def _visible_form_snapshot(page: Page | Frame) -> tuple[tuple[str, str], ...]:
+    """Capture visible form state, including ARIA widgets and step headings."""
     snapshot: list[tuple[str, str]] = []
-    fields = page.locator("input, textarea, select")
-    try:
-        count = fields.count()
-    except Exception:
-        return ()
-
-    for index in range(count):
-        element = fields.nth(index)
+    for frame_index, context in enumerate(_iter_search_contexts(page)):
+        fields = context.locator(
+            "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], "
+            "[role='checkbox'], [role='switch'], [role='radio'], [contenteditable='true']"
+        )
         try:
-            if not element.is_visible():
-                continue
-            tag, kind = _element_type(element)
-            if kind in {"password", "file", "submit", "button", "reset"}:
-                continue
-            value = element.input_value()
-            if kind in {"checkbox", "radio"}:
-                value = "checked" if element.is_checked() else "unchecked"
-            identifier = element.get_attribute("name") or element.get_attribute("id") or str(index)
-            snapshot.append((f"{tag}:{kind}:{identifier}", value))
+            count = fields.count()
         except Exception:
-            continue
+            count = 0
+
+        for index in range(count):
+            element = fields.nth(index)
+            try:
+                if not element.is_visible():
+                    continue
+                tag, kind = _element_type(element)
+                role = _element_role(element)
+                if kind in {"password", "file", "submit", "button", "reset"}:
+                    continue
+                if kind in {"checkbox", "radio"} or role in {"checkbox", "radio", "switch"}:
+                    try:
+                        value = "checked" if element.is_checked() else "unchecked"
+                    except Exception:
+                        value = (element.get_attribute("aria-checked") or "false").lower()
+                else:
+                    try:
+                        value = element.input_value()
+                    except Exception:
+                        value = element.inner_text().strip()
+                identifier = (
+                    element.get_attribute("name")
+                    or element.get_attribute("id")
+                    or element.get_attribute("data-testid")
+                    or str(index)
+                )
+                labels = "|".join(_label_candidates(element)[:2])
+                context_url = getattr(context, "url", "")
+                snapshot.append(
+                    (f"{frame_index}:{context_url}:{tag}:{kind}:{role}:{identifier}:{labels}", value)
+                )
+            except Exception:
+                continue
+
+        # Single-page apps sometimes swap a step without changing the native
+        # fields' names or current values. Headings/button labels expose that
+        # transition so we do not incorrectly decide the Next click failed.
+        status_items = context.locator("h1, h2, h3, [role='heading'], button, [role='button']")
+        try:
+            status_count = status_items.count()
+        except Exception:
+            status_count = 0
+        for index in range(status_count):
+            item = status_items.nth(index)
+            try:
+                if not item.is_visible():
+                    continue
+                text = _normalize(item.get_attribute("aria-label") or item.inner_text())
+                if not text:
+                    continue
+                role = _element_role(item) or _element_type(item)[0]
+                identifier = item.get_attribute("id") or str(index)
+                context_url = getattr(context, "url", "")
+                snapshot.append((f"{frame_index}:{context_url}:status:{role}:{identifier}", text))
+            except Exception:
+                continue
     return tuple(snapshot)
 
 
-def _wait_for_resume_processing(page: Page, timeout_ms: int = 8_000) -> None:
+def _wait_for_resume_processing(page: Page | Frame, timeout_ms: int = 8_000) -> None:
     """Wait for asynchronous resume parsing to settle, with a hard timeout."""
     started = time.monotonic()
     deadline = started + timeout_ms / 1000
@@ -508,14 +642,18 @@ def _answer_text(value: Any) -> str:
 
 
 def _choice_matches(wanted: str, option_text: str) -> bool:
-    """Match exact normalized choices, allowing explicit Yes/No explanations."""
+    """Match normalized choices and unambiguous descriptive option labels."""
     wanted_normalized = _normalize(wanted)
     option_normalized = _normalize(option_text)
     if not wanted_normalized or not option_normalized:
         return False
     if wanted_normalized == option_normalized:
         return True
-    return wanted_normalized in {"yes", "no"} and option_normalized.startswith(wanted_normalized + " ")
+    if wanted_normalized in {"yes", "no"}:
+        return option_normalized.startswith(wanted_normalized + " ")
+    # ATS options often append country codes or explanatory text. The caller
+    # rejects ambiguous results if more than one option matches.
+    return f" {wanted_normalized} " in f" {option_normalized} "
 
 
 def _select_option(element: Any, value: Any) -> bool:
@@ -550,34 +688,54 @@ def _radio_group_key(element: Any, index: int) -> str:
     try:
         group_label = element.evaluate(
             """el => {
-                const fieldset = el.closest('fieldset');
-                return fieldset ? ((fieldset.querySelector('legend') || {}).textContent || '').trim() : '';
+                const group = el.closest('[role="radiogroup"], fieldset');
+                if (!group) return '';
+                const legend = group.querySelector('legend');
+                if (legend && legend.textContent) return legend.textContent.trim();
+                const ariaLabel = group.getAttribute('aria-label');
+                if (ariaLabel) return ariaLabel.trim();
+                const labelledBy = (group.getAttribute('aria-labelledby') || '').split(/\\s+/);
+                return labelledBy.map(id => document.getElementById(id))
+                    .filter(Boolean)
+                    .map(node => (node.innerText || node.textContent || '').trim())
+                    .filter(Boolean).join(' ');
             }"""
         )
         if group_label:
-            return f"legend:{_normalize(group_label)}"
+            return f"group:{_normalize(group_label)}"
     except Exception:
         pass
     return f"radio:{element.get_attribute('id') or index}"
 
 
-def _radio_group_elements(element: Any, index: int) -> list[Any]:
+def _radio_group_elements(
+    element: Any,
+    index: int,
+    context: Page | Frame | None = None,
+) -> list[Any]:
+    """Find group siblings in the same document, including embedded frames."""
     del index
     name = element.get_attribute("name") or ""
-    radios = element.page.locator('input[type="radio"]')
+    search_context = context or element.page
+    try:
+        group = element.locator("xpath=ancestor::*[@role='radiogroup' or self::fieldset][1]")
+        if group.count():
+            options = group.locator('[role="radio"], input[type="radio"]')
+            if options.count():
+                return [options.nth(position) for position in range(options.count())]
+    except Exception:
+        pass
     if name:
-        return [
+        # Search in the caller's document/frame, not element.page: for a control
+        # inside an iframe element.page would otherwise query the top document.
+        radios = search_context.locator('input[type="radio"]')
+        native = [
             radios.nth(position)
             for position in range(radios.count())
             if (radios.nth(position).get_attribute("name") or "") == name
         ]
-    try:
-        fieldset = element.locator("xpath=ancestor::fieldset[1]")
-        if fieldset.count():
-            group = fieldset.locator('input[type="radio"]')
-            return [group.nth(position) for position in range(group.count())]
-    except Exception:
-        pass
+        if native:
+            return native
     return [element]
 
 
@@ -591,10 +749,20 @@ def _radio_option_labels(element: Any) -> list[str]:
             values.extend(str(label) for label in labels if label)
     except Exception:
         pass
-    value = element.get_attribute("value") or ""
-    if value:
-        values.append(value)
-    return values
+    for attribute in ("aria-label", "value", "data-value"):
+        try:
+            value = element.get_attribute(attribute) or ""
+        except Exception:
+            value = ""
+        if value:
+            values.append(value)
+    try:
+        visible_text = element.inner_text().strip()
+        if visible_text:
+            values.append(visible_text)
+    except Exception:
+        pass
+    return list(dict.fromkeys(values))
 
 
 def _radio_group_selected(options: list[Any]) -> bool:
@@ -603,12 +771,16 @@ def _radio_group_selected(options: list[Any]) -> bool:
             if option.is_checked():
                 return True
         except Exception:
-            continue
+            try:
+                if (option.get_attribute("aria-checked") or "").lower() == "true":
+                    return True
+            except Exception:
+                continue
     return False
 
 
 def _select_radio_option(element: Any, value: Any, options: list[Any]) -> bool:
-    """Check a radio only when its accessible label/value is an unambiguous match."""
+    """Select a radio only when its accessible label/value is an unambiguous match."""
     del element
     wanted = _answer_text(value)
     matches: list[Any] = []
@@ -622,8 +794,18 @@ def _select_radio_option(element: Any, value: Any, options: list[Any]) -> bool:
             continue
     if len(matches) != 1:
         return False
-    matches[0].check()
-    return matches[0].is_checked()
+    option = matches[0]
+    try:
+        option.check()
+        return option.is_checked()
+    except Exception:
+        # Custom ARIA radio controls are usually div/button elements rather than
+        # native inputs and must be clicked, then verified using aria-checked.
+        try:
+            option.click()
+            return (option.get_attribute("aria-checked") or "").lower() == "true"
+        except Exception:
+            return False
 
 
 def _is_placeholder_select(element: Any) -> bool:
@@ -786,8 +968,8 @@ def _display_field(candidates: list[str], fallback: str) -> str:
     return fallback
 
 
-def fill_standard_fields(
-    page: Page,
+def _fill_standard_fields_in_context(
+    page: Page | Frame,
     profile: CandidateProfile,
     field_mappings: dict[str, list[str]] | None = None,
 ) -> FormGapReport:
@@ -798,11 +980,15 @@ def fill_standard_fields(
 
     # Includes custom accessible dropdowns that are not native <select> elements.
     fields = page.locator(
-        "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], [contenteditable='true']"
+        "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], [role='checkbox'], [role='switch'], [role='radio'], [contenteditable='true']"
     )
     seen_radio_groups: set[str] = set()
+    try:
+        field_count = fields.count()
+    except Exception:
+        return report
 
-    for index in range(fields.count()):
+    for index in range(field_count):
         element = fields.nth(index)
         try:
             if not element.is_visible() or not element.is_enabled():
@@ -823,12 +1009,12 @@ def fill_standard_fields(
             candidates = _label_candidates(element)
             label = _display_field(candidates, f"Field #{index + 1}")
 
-            if kind == "radio":
+            if kind == "radio" or role == "radio":
                 group_key = _radio_group_key(element, index)
                 if group_key in seen_radio_groups:
                     continue
                 seen_radio_groups.add(group_key)
-                options = _radio_group_elements(element, index)
+                options = _radio_group_elements(element, index, page)
                 if _radio_group_selected(options):
                     report.skipped.append(f"{label} (already answered)")
                     continue
@@ -843,7 +1029,7 @@ def fill_standard_fields(
                     report.failed.append(f"{label} (no unambiguous radio option for profile answer)")
                 continue
 
-            if kind == "checkbox" or role == "checkbox":
+            if kind == "checkbox" or role in {"checkbox", "switch"}:
                 match = _resolve_field(candidates, profile_data, mappings)
                 if match is None:
                     report.unknown.append(label)
@@ -917,31 +1103,295 @@ def fill_standard_fields(
     return report
 
 
-def _find_next_button(page: Page) -> Any | None:
-    """Find Next/Continue only; never return Submit or Apply."""
-    for role in ("button", "link"):
-        locator = page.get_by_role(role, name=NEXT_PATTERN)
-        try:
-            for index in range(locator.count()):
-                element = locator.nth(index)
-                if element.is_visible() and element.is_enabled():
+def fill_standard_fields(
+    page: Page | Frame,
+    profile: CandidateProfile,
+    field_mappings: dict[str, list[str]] | None = None,
+) -> FormGapReport:
+    """Fill recognized fields in the main page and any embedded application frames."""
+    mappings = field_mappings if field_mappings is not None else load_field_mappings()
+    combined = FormGapReport()
+    for context in _iter_search_contexts(page):
+        report = _fill_standard_fields_in_context(context, profile, mappings)
+        combined.filled.extend(report.filled)
+        combined.skipped.extend(report.skipped)
+        combined.failed.extend(report.failed)
+        combined.unknown.extend(report.unknown)
+    combined.filled = list(dict.fromkeys(combined.filled))
+    combined.skipped = list(dict.fromkeys(combined.skipped))
+    combined.failed = list(dict.fromkeys(combined.failed))
+    combined.unknown = list(dict.fromkeys(combined.unknown))
+    return combined
+
+
+def _find_next_button(page: Page | Frame) -> Any | None:
+    """Find a visible Next/Continue action in the page or an embedded frame."""
+    for context in _iter_search_contexts(page):
+        for role in ("button", "link"):
+            try:
+                locator = context.get_by_role(role, name=NEXT_PATTERN)
+                for index in range(locator.count()):
+                    element = locator.nth(index)
+                    if not element.is_visible() or not element.is_enabled():
+                        continue
+                    try:
+                        label = _normalize(element.inner_text() or element.get_attribute("aria-label") or "")
+                    except Exception:
+                        label = ""
+                    # Do not treat "Apply", "Submit", or finish controls as
+                    # navigation actions even if their longer name contains "continue".
+                    if re.search(r"\b(submit|apply|finish|send application)\b", label):
+                        continue
                     return element
-        except Exception:
-            continue
+            except Exception:
+                continue
     return None
 
 
-def _has_submit_button(page: Page) -> bool:
-    """Detect a final-submit control so autofill does not advance further."""
-    try:
-        buttons = page.get_by_role("button", name=SUBMIT_PATTERN)
-        for index in range(buttons.count()):
-            button = buttons.nth(index)
-            if button.is_visible() and button.is_enabled():
+def _has_submit_button(page: Page | Frame) -> bool:
+    """Detect a final-submit control in the main page or any embedded frame."""
+    for context in _iter_search_contexts(page):
+        try:
+            buttons = context.get_by_role("button", name=SUBMIT_PATTERN)
+            for index in range(buttons.count()):
+                button = buttons.nth(index)
+                if button.is_visible() and button.is_enabled():
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def _wait_for_form_progress(
+    page: Page,
+    previous_url: str,
+    previous_snapshot: tuple[tuple[str, str], ...],
+    timeout_ms: int = 3_000,
+) -> bool:
+    """Wait briefly for a SPA/page transition after a Next button is clicked."""
+    deadline = time.monotonic() + max(250, timeout_ms) / 1000
+    while time.monotonic() < deadline:
+        try:
+            page.wait_for_timeout(250)
+        except Exception:
+            return True
+        try:
+            if page.url != previous_url:
                 return True
+        except Exception:
+            pass
+        try:
+            if _visible_form_snapshot(page) != previous_snapshot:
+                return True
+        except Exception:
+            pass
+    return False
+
+
+
+def _is_login_redirect(page: Page) -> bool:
+    """Recognize common ATS sign-in redirects without assuming every URL shape."""
+    try:
+        if any(hint in page.url.lower() for hint in LOGIN_HINTS):
+            return True
+        password = page.locator('input[type="password"]')
+        if password.count() and any(
+            word in page.title().lower() for word in ("sign in", "log in", "login")
+        ):
+            return True
     except Exception:
         pass
     return False
+
+
+def _looks_like_application_form(
+    page: Page,
+    field_mappings: dict[str, list[str]],
+) -> bool:
+    """Distinguish application controls from job-search and newsletter widgets."""
+    for context in _iter_search_contexts(page):
+        if detect_resume_upload(context) is not None:
+            return True
+
+        matched_fields: set[str] = set()
+        visible_controls = 0
+        try:
+            controls = context.locator(
+                "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], "
+                "[role='checkbox'], [role='switch'], [role='radio'], [contenteditable='true']"
+            )
+            count = controls.count()
+        except Exception:
+            count = 0
+
+        for index in range(count):
+            element = controls.nth(index)
+            try:
+                if not element.is_visible() or not element.is_enabled():
+                    continue
+                tag, kind = _element_type(element)
+                if kind in {"hidden", "button", "submit", "reset", "password", "search"}:
+                    continue
+                visible_controls += 1
+                candidates = _label_candidates(element)
+                for key in APPLICATION_SIGNAL_FIELDS:
+                    for candidate in candidates:
+                        if any(
+                            _alias_score(candidate, alias, key) > 0
+                            for alias in _get_aliases(key, field_mappings)
+                        ):
+                            matched_fields.add(key)
+            except Exception:
+                continue
+
+        if len(matched_fields) >= 2:
+            return True
+        if visible_controls >= 3 and matched_fields:
+            return True
+        if len(matched_fields) == 1 and visible_controls:
+            # A multi-step ATS may render only one application field at a time.
+            # Accept it when the URL or navigation controls indicate an application
+            # step; a lone newsletter/search email field is not sufficient.
+            if re.search(r"/(?:apply|application|applications)(?:/|$|[?#])", getattr(context, "url", ""), re.I):
+                return True
+            if _find_next_button(context) is not None:
+                return True
+        try:
+            forms = context.locator("form")
+            for index in range(forms.count()):
+                form = forms.nth(index)
+                if not form.is_visible():
+                    continue
+                marker = _normalize(
+                    " ".join(
+                        form.get_attribute(attr) or ""
+                        for attr in ("id", "name", "aria-label", "data-testid", "class")
+                    )
+                )
+                if any(token in marker for token in ("application", "applicant", "candidate", "job form")):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def _is_apply_cta(element: Any) -> bool:
+    try:
+        text = _normalize(
+            element.get_attribute("aria-label")
+            or element.inner_text()
+            or element.get_attribute("title")
+            or ""
+        )
+        if not text or any(
+            token in text for token in ("job alert", "apply filter", "apply filters", "search", "withdraw")
+        ):
+            return False
+        if APPLY_CTA_PATTERN.fullmatch(text):
+            return True
+        # Some sites append an accessibility hint such as "opens in new tab".
+        return bool(
+            re.match(
+                r"^(apply now|apply for (this )?(job|role)|apply to (this )?(job|role)|"
+                r"start (your )?application|begin (your )?application|easy apply)(\b|\s)",
+                text,
+            )
+        )
+    except Exception:
+        return False
+
+
+def prepare_application_page(
+    page: Page,
+    field_mappings: dict[str, list[str]] | None = None,
+) -> Page:
+    """Open an Apply CTA when given a job-detail page rather than an application form.
+
+    This only runs when recognizable application fields are absent. It never
+    clicks buttons inside forms or controls with submit semantics.
+    """
+    mappings = field_mappings if field_mappings is not None else load_field_mappings()
+    if _looks_like_application_form(page, mappings):
+        return page
+
+    candidates: list[Any] = []
+    for context in _iter_search_contexts(page):
+        for selector in ("a[href]", "button", "[role='button']"):
+            try:
+                controls = context.locator(selector)
+                for index in range(controls.count()):
+                    element = controls.nth(index)
+                    if not element.is_visible() or not element.is_enabled() or not _is_apply_cta(element):
+                        continue
+                    tag, kind = _element_type(element)
+                    if tag == "button" or _element_role(element) == "button":
+                        button_text = _normalize(
+                            element.get_attribute("aria-label") or element.inner_text() or ""
+                        )
+                        # An exact "Apply" button is ambiguous and could be a
+                        # one-click submission. Navigation links are safe, but
+                        # only click a button with a clear start-application label.
+                        if button_text == "apply":
+                            continue
+                        try:
+                            inside_form = bool(element.evaluate("el => Boolean(el.closest('form'))"))
+                        except Exception:
+                            inside_form = True
+                        if inside_form or kind == "submit":
+                            continue
+                    href = element.get_attribute("href") if tag == "a" else ""
+                    if tag == "a" and not href:
+                        continue
+                    candidates.append((element, href or "", context))
+            except Exception:
+                continue
+
+    if not candidates:
+        return page
+
+    # Prefer an explicit application link and only try one CTA. A human can
+    # still start the workflow manually if the site uses an unsupported widget.
+    element, _target_url, _context = candidates[0]
+    original_pages = set(page.context.pages)
+    try:
+        element.click(timeout=5_000)
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=3_000)
+        except PlaywrightTimeoutError:
+            pass
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+        opened_pages = [
+            candidate for candidate in page.context.pages
+            if candidate not in original_pages and not candidate.is_closed()
+        ]
+        if opened_pages:
+            page = opened_pages[-1]
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=5_000)
+            except PlaywrightTimeoutError:
+                pass
+    except Exception:
+        # Do not make an application unusable just because a CTA's site-specific
+        # JavaScript didn't run as expected.
+        return page
+
+    if _is_login_redirect(page):
+        raise RuntimeError(
+            "The Apply link redirected to sign-in. Complete the login in the visible browser, "
+            "then run autofill again so Job-Agent can reopen the application form."
+        )
+
+    if not _looks_like_application_form(page, mappings):
+        # If the CTA opened an intermediate or consent page, leave it visible
+        # for the user instead of guessing which unrelated button comes next.
+        return page
+    return page
+
+
 
 
 def autofill_form(
@@ -954,7 +1404,7 @@ def autofill_form(
     field_mappings: dict[str, list[str]] | None = None,
     max_pages: int = 8,
 ) -> FormGapReport:
-    """Upload a resume and fill recognized fields across a multi-page form."""
+    """Upload a resume and fill recognized fields across accessible form steps."""
     del job_id  # Reserved for future activity logging.
     if profile is None:
         profile = load_profile()
@@ -967,19 +1417,31 @@ def autofill_form(
         resume_path = next((candidate for candidate in candidates if candidate.is_file()), candidates[0])
 
     report = FormGapReport()
-    if resume_path.is_file():
-        try:
-            report.resume_uploaded = upload_resume(page, resume_path)
-            if not report.resume_uploaded:
-                report.skipped.append("No recognizable resume upload field found")
-            else:
-                _wait_for_resume_processing(page)
-        except Exception as exc:
-            report.failed.append(f"Resume upload failed: {exc}")
-    else:
+    if not _looks_like_application_form(page, mappings):
+        report.application_form_detected = False
+        report.skipped.append(
+            "No recognizable application form was found on this page. It may still be a job-details page, "
+            "or the application form may require a manual login/Apply step."
+        )
+        return report
+
+    resume_exists = resume_path.is_file()
+    if not resume_exists:
         report.skipped.append(f"Resume file not found: {resume_path}")
 
-    for page_number in range(max(1, max_pages)):
+    page_limit = max(1, max_pages)
+    for page_number in range(page_limit):
+        # Some ATS place the resume upload on a later page or inside an iframe.
+        # Keep looking until it is actually uploaded, rather than giving up after
+        # the first screen.
+        if resume_exists and not report.resume_uploaded:
+            try:
+                report.resume_uploaded = upload_resume(page, resume_path)
+                if report.resume_uploaded:
+                    _wait_for_resume_processing(page)
+            except Exception as exc:
+                report.failed.append(f"Resume upload failed: {exc}")
+
         current = fill_standard_fields(page, profile, mappings)
         report.filled.extend(current.filled)
         report.skipped.extend(current.skipped)
@@ -989,21 +1451,30 @@ def autofill_form(
         # Never click the final Submit/Apply button.
         if _has_submit_button(page):
             break
+
         next_button = _find_next_button(page)
         if next_button is None:
             break
+        if page_number == page_limit - 1:
+            report.skipped.append(f"Stopped at safety limit of {page_limit} pages")
+            break
+
+        previous_url = page.url
+        previous_snapshot = _visible_form_snapshot(page)
         try:
-            next_button.click()
-            try:
-                page.wait_for_load_state("domcontentloaded", timeout=5_000)
-            except PlaywrightTimeoutError:
-                pass
-            page.wait_for_timeout(500)
+            next_button.click(timeout=5_000)
+            if not _wait_for_form_progress(page, previous_url, previous_snapshot):
+                report.failed.append(
+                    "The Next/Continue control was clicked, but the form did not advance. "
+                    "Check required-field validation or continue this step manually."
+                )
+                break
         except Exception as exc:
             report.failed.append(f"Could not navigate to next page: {exc}")
             break
-        if page_number == max_pages - 1:
-            report.skipped.append(f"Stopped at safety limit of {max_pages} pages")
+
+    if resume_exists and not report.resume_uploaded:
+        report.skipped.append("No recognizable resume upload field found on the visited form pages")
 
     report.filled = list(dict.fromkeys(report.filled))
     report.skipped = list(dict.fromkeys(report.skipped))
