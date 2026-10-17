@@ -278,6 +278,7 @@ job-agent email-disconnect
 - Keep candidate profile data, local Chrome/Chromium profiles, resumes, OAuth credentials/tokens, the SQLite database, and exported application data on your own machine.
 - Do not commit `config/profile.json`, `config/field_mappings.json`, `config/gmail-credentials.json`, `data/chrome_profile/`, `data/chromium_profile/`, or `data/gmail/`.
 - The dashboard binds to loopback by default.
+- A running command can be interrupted from the **Command activity** panel using **Stop command**; the active subprocess is terminated and marked as stopped.
 - CSV exports prefix potentially executable spreadsheet cells to reduce formula-injection risk.
 - Back up `data/jobs.db` before changing or restoring local data.
 
