@@ -505,14 +505,17 @@ def upload_resume(page: Page | Frame, resume_path: str | Path) -> bool:
 
 
 def _visible_form_snapshot(page: Page | Frame) -> tuple[tuple[str, str], ...]:
-    """Capture visible control values across the main page and embedded frames."""
+    """Capture visible form state, including ARIA widgets and step headings."""
     snapshot: list[tuple[str, str]] = []
     for frame_index, context in enumerate(_iter_search_contexts(page)):
-        fields = context.locator("input, textarea, select")
+        fields = context.locator(
+            "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], "
+            "[role='checkbox'], [role='switch'], [role='radio'], [contenteditable='true']"
+        )
         try:
             count = fields.count()
         except Exception:
-            continue
+            count = 0
 
         for index in range(count):
             element = fields.nth(index)
@@ -520,15 +523,53 @@ def _visible_form_snapshot(page: Page | Frame) -> tuple[tuple[str, str], ...]:
                 if not element.is_visible():
                     continue
                 tag, kind = _element_type(element)
+                role = _element_role(element)
                 if kind in {"password", "file", "submit", "button", "reset"}:
                     continue
-                value = element.input_value()
-                if kind in {"checkbox", "radio"}:
-                    value = "checked" if element.is_checked() else "unchecked"
-                identifier = element.get_attribute("name") or element.get_attribute("id") or str(index)
+                if kind in {"checkbox", "radio"} or role in {"checkbox", "radio", "switch"}:
+                    try:
+                        value = "checked" if element.is_checked() else "unchecked"
+                    except Exception:
+                        value = (element.get_attribute("aria-checked") or "false").lower()
+                else:
+                    try:
+                        value = element.input_value()
+                    except Exception:
+                        value = element.inner_text().strip()
+                identifier = (
+                    element.get_attribute("name")
+                    or element.get_attribute("id")
+                    or element.get_attribute("data-testid")
+                    or str(index)
+                )
                 labels = "|".join(_label_candidates(element)[:2])
                 context_url = getattr(context, "url", "")
-                snapshot.append((f"{frame_index}:{context_url}:{tag}:{kind}:{identifier}:{labels}", value))
+                snapshot.append(
+                    (f"{frame_index}:{context_url}:{tag}:{kind}:{role}:{identifier}:{labels}", value)
+                )
+            except Exception:
+                continue
+
+        # Single-page apps sometimes swap a step without changing the native
+        # fields' names or current values. Headings/button labels expose that
+        # transition so we do not incorrectly decide the Next click failed.
+        status_items = context.locator("h1, h2, h3, [role='heading'], button, [role='button']")
+        try:
+            status_count = status_items.count()
+        except Exception:
+            status_count = 0
+        for index in range(status_count):
+            item = status_items.nth(index)
+            try:
+                if not item.is_visible():
+                    continue
+                text = _normalize(item.get_attribute("aria-label") or item.inner_text())
+                if not text:
+                    continue
+                role = _element_role(item) or _element_type(item)[0]
+                identifier = item.get_attribute("id") or str(index)
+                context_url = getattr(context, "url", "")
+                snapshot.append((f"{frame_index}:{context_url}:status:{role}:{identifier}", text))
             except Exception:
                 continue
     return tuple(snapshot)
