@@ -754,7 +754,7 @@ export default function App() {
           )}
         </section>
 
-        <section className="applications-panel mb-6">
+        <section id="applications" className="applications-panel mb-6">
           <PanelHeading title="Applications" count={jobs.length} description="Track each role, update status, and keep follow-ups visible." action={<div className="flex flex-wrap gap-2">
             <input ref={fileInputRef} type="file" accept=".csv,text/csv" className="hidden" onChange={importCsv} />
             <Button onClick={() => fileInputRef.current?.click()}><ArrowUpFromLine size={15} /> Import CSV</Button>
