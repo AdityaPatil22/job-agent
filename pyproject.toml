@@ -32,3 +32,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.package-data]
+job_agent = ["static/*", "static/react-build/*", "static/react-build/assets/*"]
