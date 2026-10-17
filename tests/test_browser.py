@@ -130,7 +130,7 @@ def test_goto_retries_job_url_after_login_page(
     manager._page = page
     monkeypatch.setattr(manager, "get_page", lambda: page)
     monkeypatch.setattr(manager, "handle_timeout", Mock())
-    states = iter([True, True, False])
+    states = iter([True, False])
     monkeypatch.setattr(manager, "is_login_page", lambda: next(states))
 
     result = manager.goto("https://jobs.example.com/application")
