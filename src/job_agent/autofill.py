@@ -1248,6 +1248,14 @@ def _looks_like_application_form(
             return True
         if visible_controls >= 3 and matched_fields:
             return True
+        if len(matched_fields) == 1 and visible_controls:
+            # A multi-step ATS may render only one application field at a time.
+            # Accept it when the URL or navigation controls indicate an application
+            # step; a lone newsletter/search email field is not sufficient.
+            if re.search(r"/(?:apply|application|applications)(?:/|$|[?#])", getattr(context, "url", ""), re.I):
+                return True
+            if _find_next_button(context) is not None:
+                return True
         try:
             forms = context.locator("form")
             for index in range(forms.count()):
