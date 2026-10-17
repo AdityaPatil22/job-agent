@@ -555,14 +555,18 @@ def _answer_text(value: Any) -> str:
 
 
 def _choice_matches(wanted: str, option_text: str) -> bool:
-    """Match exact normalized choices, allowing explicit Yes/No explanations."""
+    """Match normalized choices and unambiguous descriptive option labels."""
     wanted_normalized = _normalize(wanted)
     option_normalized = _normalize(option_text)
     if not wanted_normalized or not option_normalized:
         return False
     if wanted_normalized == option_normalized:
         return True
-    return wanted_normalized in {"yes", "no"} and option_normalized.startswith(wanted_normalized + " ")
+    if wanted_normalized in {"yes", "no"}:
+        return option_normalized.startswith(wanted_normalized + " ")
+    # ATS options often append country codes or explanatory text. The caller
+    # rejects ambiguous results if more than one option matches.
+    return f" {wanted_normalized} " in f" {option_normalized} "
 
 
 def _select_option(element: Any, value: Any) -> bool:
