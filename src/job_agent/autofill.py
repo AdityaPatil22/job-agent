@@ -709,12 +709,16 @@ def _radio_group_selected(options: list[Any]) -> bool:
             if option.is_checked():
                 return True
         except Exception:
-            continue
+            try:
+                if (option.get_attribute("aria-checked") or "").lower() == "true":
+                    return True
+            except Exception:
+                continue
     return False
 
 
 def _select_radio_option(element: Any, value: Any, options: list[Any]) -> bool:
-    """Check a radio only when its accessible label/value is an unambiguous match."""
+    """Select a radio only when its accessible label/value is an unambiguous match."""
     del element
     wanted = _answer_text(value)
     matches: list[Any] = []
@@ -728,8 +732,18 @@ def _select_radio_option(element: Any, value: Any, options: list[Any]) -> bool:
             continue
     if len(matches) != 1:
         return False
-    matches[0].check()
-    return matches[0].is_checked()
+    option = matches[0]
+    try:
+        option.check()
+        return option.is_checked()
+    except Exception:
+        # Custom ARIA radio controls are usually div/button elements rather than
+        # native inputs and must be clicked, then verified using aria-checked.
+        try:
+            option.click()
+            return (option.get_attribute("aria-checked") or "").lower() == "true"
+        except Exception:
+            return False
 
 
 def _is_placeholder_select(element: Any) -> bool:
@@ -904,7 +918,7 @@ def _fill_standard_fields_in_context(
 
     # Includes custom accessible dropdowns that are not native <select> elements.
     fields = page.locator(
-        "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], [contenteditable='true']"
+        "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], [role='checkbox'], [role='switch'], [role='radio'], [contenteditable='true']"
     )
     seen_radio_groups: set[str] = set()
     try:
@@ -933,7 +947,7 @@ def _fill_standard_fields_in_context(
             candidates = _label_candidates(element)
             label = _display_field(candidates, f"Field #{index + 1}")
 
-            if kind == "radio":
+            if kind == "radio" or role == "radio":
                 group_key = _radio_group_key(element, index)
                 if group_key in seen_radio_groups:
                     continue
@@ -953,7 +967,7 @@ def _fill_standard_fields_in_context(
                     report.failed.append(f"{label} (no unambiguous radio option for profile answer)")
                 continue
 
-            if kind == "checkbox" or role == "checkbox":
+            if kind == "checkbox" or role in {"checkbox", "switch"}:
                 match = _resolve_field(candidates, profile_data, mappings)
                 if match is None:
                     report.unknown.append(label)
