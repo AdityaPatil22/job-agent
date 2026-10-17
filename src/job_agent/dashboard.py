@@ -88,6 +88,8 @@ class TaskManager:
                 "return_code": None,
                 "created_at": _now(),
                 "finished_at": None,
+                "process": None,
+                "cancel_requested": False,
                 "output_parts": deque(),
                 "output_size": 0,
             }
@@ -102,8 +104,43 @@ class TaskManager:
         thread.start()
         return {"task_id": task_id, "status": "running", "label": label}
 
-    def _append_output(self, task_id: str, chunk: str) -> None:
+    def stop(self, task_id: str) -> dict[str, Any] | None:
+        """Stop a running command and return its final task state."""
         with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return None
+            if task["status"] not in {"running", "stopping"}:
+                return self._serialize_task(task)
+            process = task.get("process")
+            task["cancel_requested"] = True
+            task["status"] = "stopping"
+            self._append_output(task_id, "\n[Stop requested; terminating command...]\n")
+
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=3)
+            except ProcessLookupError:
+                pass
+
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None:
+                return None
+            if task.get("cancel_requested"):
+                task["status"] = "stopped"
+                task["return_code"] = process.returncode if process is not None else -15
+                task["finished_at"] = task["finished_at"] or _now()
+                self._append_output(task_id, "[Command stopped by user]\n")
+            if self._active_id == task_id:
+                self._active_id = None
+            return self._serialize_task(task)
+
+    def _append_output(self, task_id: str, chunk: str) -> None        with self._lock:
             task = self._tasks.get(task_id)
             if task is None:
                 return
@@ -141,6 +178,16 @@ class TaskManager:
                 bufsize=1,
                 shell=False,
             )
+            with self._lock:
+                current = self._tasks.get(task_id)
+                if current is not None:
+                    current["process"] = process
+                    should_stop = current.get("cancel_requested", False)
+                else:
+                    should_stop = True
+            if should_stop and process.poll() is None:
+                process.terminate()
+
             assert process.stdout is not None
             # Read character-by-character so prompts without a newline become
             # visible in the dashboard while the child waits for terminal input.
@@ -152,7 +199,10 @@ class TaskManager:
                 sys.stdout.write(char)
                 sys.stdout.flush()
             return_code = process.wait()
-            final_status = "succeeded" if return_code == 0 else "failed"
+            with self._lock:
+                current = self._tasks.get(task_id)
+                was_stopped = bool(current and current.get("cancel_requested"))
+            final_status = "stopped" if was_stopped else ("succeeded" if return_code == 0 else "failed")
             self._append_output(task_id, f"\n[Command exited with code {return_code}]\n")
         except Exception as exc:
             return_code = -1
@@ -165,8 +215,9 @@ class TaskManager:
                 current = self._tasks.get(task_id)
                 if current is not None:
                     current["return_code"] = return_code
-                    current["status"] = final_status
-                    current["finished_at"] = _now()
+                    current["status"] = "stopped" if current.get("cancel_requested") else final_status
+                    current["finished_at"] = current["finished_at"] or _now()
+                    current["process"] = None
                 if self._active_id == task_id:
                     self._active_id = None
 
@@ -188,7 +239,7 @@ class TaskManager:
             return self._serialize_task(task)
 
     def _serialize_task(self, task: dict[str, Any], include_output: bool = True) -> dict[str, Any]:
-        result = {key: value for key, value in task.items() if key not in {"output_parts", "output_size"}}
+        result = {key: value for key, value in task.items() if key not in {"output_parts", "output_size", "process", "cancel_requested"}}
         if include_output:
             result["output"] = _tail_join(task["output_parts"])
         return result
@@ -679,6 +730,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
         path = urlsplit(self.path).path
         try:
             payload = self._read_json(max_bytes=6 * 1024 * 1024 if path == "/api/import.csv" else MAX_REQUEST_BYTES)
+            if path.startswith("/api/tasks/") and path.endswith("/stop"):
+                task_id = path.removeprefix("/api/tasks/").removesuffix("/stop").strip("/")
+                if not task_id or "/" in task_id:
+                    self._json({"error": "Task not found."}, 404)
+                    return
+                task = TASKS.stop(task_id)
+                if task is None:
+                    self._json({"error": "Task not found."}, 404)
+                    return
+                self._json(task)
+                return
             if path == "/api/actions/email-connect":
                 result = TASKS.start("Connect Gmail", ["email-connect"])
                 self._json(result, 202)
