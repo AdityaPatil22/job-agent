@@ -238,7 +238,7 @@ def apply_command(
     manager: BrowserManager | None = None
     try:
         if browser_mode.lower() == "chrome":
-            started = ensure_chrome_ready(cdp_url, start_url=job["url"])
+            started = ensure_chrome_ready(cdp_url)
             if started:
                 click.echo(
                     "Started Job-Agent Chrome. Sign in to the career portal in that window if prompted."
