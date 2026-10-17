@@ -121,7 +121,7 @@ function statusLabel(value) {
   return STATUSES.find((item) => item.value === value)?.label || value || "Discovered";
 }
 
-function Button({ children, onClick, variant = "secondary", size = "normal", disabled = false, type = "button", className = "" }) {
+function Button({ children, onClick, variant = "secondary", size = "normal", disabled = false, type = "button", className = "", ...props }) {
   const base = "inline-flex items-center justify-center gap-2 rounded-lg border font-semibold transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100 disabled:cursor-not-allowed disabled:opacity-50";
   const sizes = size === "small" ? "min-h-8 px-2.5 text-xs" : "min-h-10 px-3.5 text-sm";
   const variants = {
@@ -131,7 +131,7 @@ function Button({ children, onClick, variant = "secondary", size = "normal", dis
     danger: "border-rose-200 bg-white text-rose-700 hover:bg-rose-50",
   };
   return (
-    <button type={type} onClick={onClick} disabled={disabled} className={[base, sizes, variants[variant] || variants.secondary, className].join(" ")}>
+    <button {...props} type={type} onClick={onClick} disabled={disabled} className={[base, sizes, variants[variant] || variants.secondary, className].join(" ")}>
       {children}
     </button>
   );
