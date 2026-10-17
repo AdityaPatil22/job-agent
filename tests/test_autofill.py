@@ -215,3 +215,50 @@ def test_example_profile_placeholders_are_not_used_as_answers() -> None:
 )
 def test_dropdown_choice_matching(wanted: str, option: str, expected: bool) -> None:
     assert _choice_matches(wanted, option) is expected
+
+
+def test_real_name_overrides_unedited_name_placeholders() -> None:
+    profile = CandidateProfile(
+        name="Ada Lovelace",
+        first_name="Your First Name",
+        last_name="Your Last Name",
+    )
+
+    values = _profile_data(profile)
+
+    assert _get_field_value(values, "first_name") == "Ada"
+    assert _get_field_value(values, "last_name") == "Lovelace"
+
+
+def test_fills_skills_location_and_second_address_line(page) -> None:
+    page.set_content(
+        """
+        <label for="skills">Technical skills</label>
+        <input id="skills" name="skills">
+        <label for="location">Current location</label>
+        <input id="location" name="location">
+        <label for="address_line_2">Address line 2</label>
+        <input id="address_line_2" name="address_line_2">
+        """
+    )
+    profile = CandidateProfile(
+        skills=["Python", "Playwright"],
+        location="Pune, Maharashtra, India",
+        address_line_2="Baner Road",
+    )
+
+    report = fill_standard_fields(
+        page,
+        profile,
+        {
+            "skills": ["technical skills"],
+            "location": ["current location"],
+            "address_line_2": ["address line 2"],
+        },
+    )
+
+    assert page.locator("#skills").input_value() == "Python, Playwright"
+    assert page.locator("#location").input_value() == "Pune, Maharashtra, India"
+    assert page.locator("#address_line_2").input_value() == "Baner Road"
+    assert len(report.filled) == 3
+    assert not report.failed
