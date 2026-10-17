@@ -9,6 +9,7 @@ from job_agent.browser import (
     DEFAULT_CDP_URL,
     BrowserManager,
     build_chrome_command,
+    ensure_chrome_ready,
     is_cdp_available,
     validate_cdp_url,
 )
@@ -92,3 +93,48 @@ def test_managed_mode_closes_its_owned_context() -> None:
 
     context.close.assert_called_once_with()
     playwright.stop.assert_called_once_with()
+
+
+def test_ensure_chrome_ready_starts_persistent_profile_when_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    probes = iter([False, False, True])
+    start = Mock(return_value=True)
+    monkeypatch.setattr("job_agent.browser.is_cdp_available", lambda _url: next(probes))
+    monkeypatch.setattr("job_agent.browser.start_chrome", start)
+    monkeypatch.setattr("job_agent.browser.time.sleep", lambda _seconds: None)
+
+    assert ensure_chrome_ready(DEFAULT_CDP_URL, start_url="https://jobs.example.com/role") is True
+
+    start.assert_called_once()
+    assert start.call_args.kwargs["port"] == 9222
+    assert start.call_args.kwargs["url"] == "https://jobs.example.com/role"
+
+
+def test_ensure_chrome_ready_reuses_existing_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start = Mock()
+    monkeypatch.setattr("job_agent.browser.is_cdp_available", lambda _url: True)
+    monkeypatch.setattr("job_agent.browser.start_chrome", start)
+
+    assert ensure_chrome_ready(DEFAULT_CDP_URL) is False
+    start.assert_not_called()
+
+
+def test_goto_retries_job_url_after_login_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = BrowserManager(mode="managed")
+    page = Mock()
+    manager._page = page
+    monkeypatch.setattr(manager, "get_page", lambda: page)
+    monkeypatch.setattr(manager, "handle_timeout", Mock())
+    states = iter([True, True, False])
+    monkeypatch.setattr(manager, "is_login_page", lambda: next(states))
+
+    result = manager.goto("https://jobs.example.com/application")
+
+    assert result is page
+    assert page.goto.call_count == 2
+    assert page.goto.call_args_list[-1].args[0] == "https://jobs.example.com/application"
