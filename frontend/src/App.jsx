@@ -389,7 +389,7 @@ export default function App() {
     try {
       const result = await api(path, { method: "POST", body: JSON.stringify(payload) });
       if (result.task_id) {
-        setCurrentTask({ ...result, label: label || result.label, output: "Starting task…" });
+        setCurrentTask({ ...result, id: result.task_id, label: label || result.label, output: "Starting task…" });
         notify((label || result.label || "Task") + " started. If it requests input, use the terminal running Job-Agent.");
         return true;
       }
