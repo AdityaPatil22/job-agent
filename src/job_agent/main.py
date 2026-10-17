@@ -16,7 +16,7 @@ from .browser import (
     ensure_chrome_ready,
     start_chrome,
 )
-from .config import ConfigError, load_profile
+from .config import ConfigError, load_field_mappings, load_profile
 from .database import (
     add_job,
     export_csv,
@@ -222,7 +222,10 @@ def apply_command(
     if job is None:
         raise click.ClickException(f"Job #{job_id} was not found. Run 'job-agent jobs' to list jobs.")
     try:
+        # Validate both local config files before opening a browser so a missing
+        # mapping file cannot look like a silent autofill failure.
         profile = load_profile()
+        field_mappings = load_field_mappings()
     except ConfigError as exc:
         raise click.ClickException(str(exc)) from exc
 
@@ -245,7 +248,14 @@ def apply_command(
                 )
         manager = BrowserManager(headless=headless, mode=browser_mode.lower(), cdp_url=cdp_url)
         page = manager.goto(job["url"])
-        report = autofill_form(page, job_id, resume_name, profile=profile, resumes_dir=RESUMES_DIR)
+        report = autofill_form(
+            page,
+            job_id,
+            resume_name,
+            profile=profile,
+            resumes_dir=RESUMES_DIR,
+            field_mappings=field_mappings,
+        )
         click.echo(report.render())
         wait_for_submit_button(page)
         update_application_status(
