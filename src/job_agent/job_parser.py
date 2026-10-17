@@ -230,11 +230,19 @@ def _fallback_job_from_url(url: str) -> Job:
 
 
 def _merge_detected(primary: Job | None, secondary: Job) -> Job:
-    """Prefer meaningful values from the secondary fetch, retaining primary data."""
+    """Keep useful primary fields and fill gaps with the secondary fetch."""
     if primary is None:
         return secondary
-    title = secondary.title if _is_detected(secondary.title, "Untitled role") else primary.title
-    company = secondary.company if _is_detected(secondary.company, "Unknown company") else primary.company
+    title = (
+        primary.title if _is_detected(primary.title, "Untitled role")
+        else secondary.title if _is_detected(secondary.title, "Untitled role")
+        else "Untitled role"
+    )
+    company = (
+        primary.company if _is_detected(primary.company, "Unknown company")
+        else secondary.company if _is_detected(secondary.company, "Unknown company")
+        else "Unknown company"
+    )
     description = secondary.description or primary.description
     location = secondary.location or primary.location
     return normalize_job_data(
@@ -271,7 +279,7 @@ def parse_job_from_url(url: str, playwright_page=None) -> Job:
         # 403/429 responses are common on ATS pages and should not stop tracking.
         job = None
 
-    if job is None or not _is_detected(job.title, "Untitled role") or not _is_detected(job.company, "Unknown company"):
+    if job is None or _needs_browser_retry(job):
         browser_html = _fetch_html_with_playwright(clean_url)
         if browser_html:
             browser_job = parse_job_html(browser_html, clean_url)
