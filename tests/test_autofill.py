@@ -262,3 +262,68 @@ def test_fills_skills_location_and_second_address_line(page) -> None:
     assert page.locator("#address_line_2").input_value() == "Baner Road"
     assert len(report.filled) == 3
     assert not report.failed
+
+
+def test_handles_custom_aria_checkbox(page) -> None:
+    page.set_content(
+        """
+        <div role="group" aria-label="Relocation">
+          <div id="relocation" role="checkbox" aria-label="Willing to relocate"
+               aria-checked="false" tabindex="0">Willing to relocate</div>
+        </div>
+        <script>
+          const checkbox = document.querySelector('#relocation');
+          checkbox.addEventListener('click', () => {
+            checkbox.setAttribute(
+              'aria-checked',
+              checkbox.getAttribute('aria-checked') === 'true' ? 'false' : 'true'
+            );
+          });
+        </script>
+        """
+    )
+    profile = CandidateProfile(relocation=True)
+
+    report = fill_standard_fields(
+        page,
+        profile,
+        {"relocation": ["willing to relocate"]},
+    )
+
+    assert page.locator("#relocation").get_attribute("aria-checked") == "true"
+    assert any("relocation <- relocation" in item.lower() for item in report.filled)
+    assert not report.failed
+
+
+def test_handles_custom_aria_radio_group(page) -> None:
+    page.set_content(
+        """
+        <div role="radiogroup" aria-label="Work authorization">
+          <div id="authorized-yes" role="radio" aria-label="Yes"
+               aria-checked="false" tabindex="0">Yes</div>
+          <div id="authorized-no" role="radio" aria-label="No"
+               aria-checked="false" tabindex="0">No</div>
+        </div>
+        <script>
+          for (const radio of document.querySelectorAll('[role="radio"]')) {
+            radio.addEventListener('click', () => {
+              for (const option of document.querySelectorAll('[role="radio"]')) {
+                option.setAttribute('aria-checked', String(option === radio));
+              }
+            });
+          }
+        </script>
+        """
+    )
+    profile = CandidateProfile(work_authorization="Yes")
+
+    report = fill_standard_fields(
+        page,
+        profile,
+        {"work_authorization": ["work authorization", "authorized to work"]},
+    )
+
+    assert page.locator("#authorized-yes").get_attribute("aria-checked") == "true"
+    assert page.locator("#authorized-no").get_attribute("aria-checked") == "false"
+    assert any("work authorization <- work_authorization" in item.lower() for item in report.filled)
+    assert not report.failed
