@@ -188,6 +188,11 @@ class TaskManager:
                     should_stop = True
             if should_stop and process.poll() is None:
                 process.terminate()
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=3)
 
             assert process.stdout is not None
             # Read character-by-character so prompts without a newline become
