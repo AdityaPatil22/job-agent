@@ -78,6 +78,19 @@ SUBMIT_PATTERN = re.compile(
     re.I,
 )
 NEXT_PATTERN = re.compile(r"\b(next|continue|proceed|save and continue|next step)\b", re.I)
+APPLY_CTA_PATTERN = re.compile(
+    r"^(apply|apply now|apply for (this )?(job|role)|apply to (this )?(job|role)|"
+    r"start (your )?application|begin (your )?application|easy apply|"
+    r"continue to application|apply externally|apply on company site)$",
+    re.I,
+)
+APPLICATION_SIGNAL_FIELDS = {
+    "full_name", "first_name", "last_name", "email", "phone", "country_code",
+    "linkedin", "github", "portfolio", "address", "address_line_2",
+    "work_authorization", "visa_sponsorship", "relocation",
+    "education_school", "education_degree", "education_field", "resume",
+}
+LOGIN_HINTS = ("login", "signin", "sign-in", "authenticate", "session-expired")
 
 PLACEHOLDER_VALUES = {
     "",
@@ -1173,6 +1186,197 @@ def _wait_for_form_progress(
         except Exception:
             pass
     return False
+
+
+
+def _is_login_redirect(page: Page) -> bool:
+    """Recognize common ATS sign-in redirects without assuming every URL shape."""
+    try:
+        if any(hint in page.url.lower() for hint in LOGIN_HINTS):
+            return True
+        password = page.locator('input[type="password"]')
+        if password.count() and any(
+            word in page.title().lower() for word in ("sign in", "log in", "login")
+        ):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _looks_like_application_form(
+    page: Page,
+    field_mappings: dict[str, list[str]],
+) -> bool:
+    """Distinguish application controls from job-search and newsletter widgets."""
+    for context in _iter_search_contexts(page):
+        if detect_resume_upload(context) is not None:
+            return True
+
+        matched_fields: set[str] = set()
+        visible_controls = 0
+        try:
+            controls = context.locator(
+                "input, textarea, select, [role='combobox'], [aria-haspopup='listbox'], "
+                "[role='checkbox'], [role='switch'], [role='radio'], [contenteditable='true']"
+            )
+            count = controls.count()
+        except Exception:
+            count = 0
+
+        for index in range(count):
+            element = controls.nth(index)
+            try:
+                if not element.is_visible() or not element.is_enabled():
+                    continue
+                tag, kind = _element_type(element)
+                if kind in {"hidden", "button", "submit", "reset", "password", "search"}:
+                    continue
+                visible_controls += 1
+                candidates = _label_candidates(element)
+                for key in APPLICATION_SIGNAL_FIELDS:
+                    for candidate in candidates:
+                        if any(
+                            _alias_score(candidate, alias, key) > 0
+                            for alias in _get_aliases(key, field_mappings)
+                        ):
+                            matched_fields.add(key)
+            except Exception:
+                continue
+
+        if len(matched_fields) >= 2:
+            return True
+        if visible_controls >= 3 and matched_fields:
+            return True
+        try:
+            forms = context.locator("form")
+            for index in range(forms.count()):
+                form = forms.nth(index)
+                if not form.is_visible():
+                    continue
+                marker = _normalize(
+                    " ".join(
+                        form.get_attribute(attr) or ""
+                        for attr in ("id", "name", "aria-label", "data-testid", "class")
+                    )
+                )
+                if any(token in marker for token in ("application", "applicant", "candidate", "job form")):
+                    return True
+        except Exception:
+            pass
+    return False
+
+
+def _is_apply_cta(element: Any) -> bool:
+    try:
+        text = _normalize(
+            element.get_attribute("aria-label")
+            or element.inner_text()
+            or element.get_attribute("title")
+            or ""
+        )
+        if not text or any(
+            token in text for token in ("job alert", "apply filter", "apply filters", "search", "withdraw")
+        ):
+            return False
+        if APPLY_CTA_PATTERN.fullmatch(text):
+            return True
+        # Some sites append an accessibility hint such as "opens in new tab".
+        return bool(
+            re.match(
+                r"^(apply now|apply for (this )?(job|role)|apply to (this )?(job|role)|"
+                r"start (your )?application|begin (your )?application|easy apply)(\\b|\\s)",
+                text,
+            )
+        )
+    except Exception:
+        return False
+
+
+def prepare_application_page(
+    page: Page,
+    field_mappings: dict[str, list[str]] | None = None,
+) -> Page:
+    """Open an Apply CTA when given a job-detail page rather than an application form.
+
+    This only runs when recognizable application fields are absent. It never
+    clicks buttons inside forms or controls with submit semantics.
+    """
+    mappings = field_mappings if field_mappings is not None else load_field_mappings()
+    if _looks_like_application_form(page, mappings):
+        return page
+
+    candidates: list[Any] = []
+    for context in _iter_search_contexts(page):
+        for selector in ("a[href]", "button", "[role='button']"):
+            try:
+                controls = context.locator(selector)
+                for index in range(controls.count()):
+                    element = controls.nth(index)
+                    if not element.is_visible() or not element.is_enabled() or not _is_apply_cta(element):
+                        continue
+                    tag, kind = _element_type(element)
+                    if tag == "button" or _element_role(element) == "button":
+                        try:
+                            inside_form = bool(element.evaluate("el => Boolean(el.closest('form'))"))
+                        except Exception:
+                            inside_form = True
+                        if inside_form or kind == "submit":
+                            continue
+                    href = element.get_attribute("href") if tag == "a" else ""
+                    if tag == "a" and not href:
+                        continue
+                    candidates.append((element, href or "", context))
+            except Exception:
+                continue
+
+    if not candidates:
+        return page
+
+    # Prefer an explicit application link and only try one CTA. A human can
+    # still start the workflow manually if the site uses an unsupported widget.
+    element, target_url, _context = candidates[0]
+    original_url = page.url
+    original_pages = set(page.context.pages)
+    try:
+        element.click(timeout=5_000)
+        try:
+            page.wait_for_load_state("domcontentloaded", timeout=3_000)
+        except PlaywrightTimeoutError:
+            pass
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            pass
+
+        opened_pages = [
+            candidate for candidate in page.context.pages
+            if candidate not in original_pages and not candidate.is_closed()
+        ]
+        if opened_pages:
+            page = opened_pages[-1]
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=5_000)
+            except PlaywrightTimeoutError:
+                pass
+    except Exception:
+        # Do not make an application unusable just because a CTA's site-specific
+        # JavaScript didn't run as expected.
+        return page
+
+    if _is_login_redirect(page):
+        raise RuntimeError(
+            "The Apply link redirected to sign-in. Complete the login in the visible browser, "
+            "then run autofill again so Job-Agent can reopen the application form."
+        )
+
+    if not _looks_like_application_form(page, mappings):
+        # If the CTA opened an intermediate or consent page, leave it visible
+        # for the user instead of guessing which unrelated button comes next.
+        return page
+    return page
+
+
 
 
 def autofill_form(
