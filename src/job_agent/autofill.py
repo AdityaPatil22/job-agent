@@ -494,7 +494,8 @@ def _visible_form_snapshot(page: Page | Frame) -> tuple[tuple[str, str], ...]:
                     value = "checked" if element.is_checked() else "unchecked"
                 identifier = element.get_attribute("name") or element.get_attribute("id") or str(index)
                 labels = "|".join(_label_candidates(element)[:2])
-                snapshot.append((f"{frame_index}:{tag}:{kind}:{identifier}:{labels}", value))
+                context_url = getattr(context, "url", "")
+                snapshot.append((f"{frame_index}:{context_url}:{tag}:{kind}:{identifier}:{labels}", value))
             except Exception:
                 continue
     return tuple(snapshot)
@@ -832,8 +833,8 @@ def _display_field(candidates: list[str], fallback: str) -> str:
     return fallback
 
 
-def fill_standard_fields(
-    page: Page,
+def _fill_standard_fields_in_context(
+    page: Page | Frame,
     profile: CandidateProfile,
     field_mappings: dict[str, list[str]] | None = None,
 ) -> FormGapReport:
@@ -963,30 +964,88 @@ def fill_standard_fields(
     return report
 
 
-def _find_next_button(page: Page) -> Any | None:
-    """Find Next/Continue only; never return Submit or Apply."""
-    for role in ("button", "link"):
-        locator = page.get_by_role(role, name=NEXT_PATTERN)
-        try:
-            for index in range(locator.count()):
-                element = locator.nth(index)
-                if element.is_visible() and element.is_enabled():
+def fill_standard_fields(
+    page: Page | Frame,
+    profile: CandidateProfile,
+    field_mappings: dict[str, list[str]] | None = None,
+) -> FormGapReport:
+    """Fill recognized fields in the main page and any embedded application frames."""
+    mappings = field_mappings if field_mappings is not None else load_field_mappings()
+    combined = FormGapReport()
+    for context in _iter_search_contexts(page):
+        report = _fill_standard_fields_in_context(context, profile, mappings)
+        combined.filled.extend(report.filled)
+        combined.skipped.extend(report.skipped)
+        combined.failed.extend(report.failed)
+        combined.unknown.extend(report.unknown)
+    combined.filled = list(dict.fromkeys(combined.filled))
+    combined.skipped = list(dict.fromkeys(combined.skipped))
+    combined.failed = list(dict.fromkeys(combined.failed))
+    combined.unknown = list(dict.fromkeys(combined.unknown))
+    return combined
+
+
+def _find_next_button(page: Page | Frame) -> Any | None:
+    """Find a visible Next/Continue action in the page or an embedded frame."""
+    for context in _iter_search_contexts(page):
+        for role in ("button", "link"):
+            try:
+                locator = context.get_by_role(role, name=NEXT_PATTERN)
+                for index in range(locator.count()):
+                    element = locator.nth(index)
+                    if not element.is_visible() or not element.is_enabled():
+                        continue
+                    try:
+                        label = _normalize(element.inner_text() or element.get_attribute("aria-label") or "")
+                    except Exception:
+                        label = ""
+                    # Do not treat "Apply", "Submit", or finish controls as
+                    # navigation actions even if their longer name contains "continue".
+                    if re.search(r"\b(submit|apply|finish|send application)\b", label):
+                        continue
                     return element
-        except Exception:
-            continue
+            except Exception:
+                continue
     return None
 
 
-def _has_submit_button(page: Page) -> bool:
-    """Detect a final-submit control so autofill does not advance further."""
-    try:
-        buttons = page.get_by_role("button", name=SUBMIT_PATTERN)
-        for index in range(buttons.count()):
-            button = buttons.nth(index)
-            if button.is_visible() and button.is_enabled():
+def _has_submit_button(page: Page | Frame) -> bool:
+    """Detect a final-submit control in the main page or any embedded frame."""
+    for context in _iter_search_contexts(page):
+        try:
+            buttons = context.get_by_role("button", name=SUBMIT_PATTERN)
+            for index in range(buttons.count()):
+                button = buttons.nth(index)
+                if button.is_visible() and button.is_enabled():
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def _wait_for_form_progress(
+    page: Page,
+    previous_url: str,
+    previous_snapshot: tuple[tuple[str, str], ...],
+    timeout_ms: int = 3_000,
+) -> bool:
+    """Wait briefly for a SPA/page transition after a Next button is clicked."""
+    deadline = time.monotonic() + max(250, timeout_ms) / 1000
+    while time.monotonic() < deadline:
+        try:
+            page.wait_for_timeout(250)
+        except Exception:
+            return True
+        try:
+            if page.url != previous_url:
                 return True
-    except Exception:
-        pass
+        except Exception:
+            pass
+        try:
+            if _visible_form_snapshot(page) != previous_snapshot:
+                return True
+        except Exception:
+            pass
     return False
 
 
