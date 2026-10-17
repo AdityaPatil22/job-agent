@@ -372,7 +372,14 @@ export default function App() {
         setCurrentTask(task);
         if (task.status !== "running") {
           await refreshDashboard();
-          notify(task.status === "succeeded" ? (task.label || "Task") + " completed." : (task.label || "Task") + " failed. Check command activity.", task.status === "succeeded" ? "success" : "error");
+          notify(
+            task.status === "succeeded"
+              ? (task.label || "Task") + " completed."
+              : task.status === "stopped"
+                ? (task.label || "Task") + " stopped."
+                : (task.label || "Task") + " failed. Check command activity.",
+            task.status === "failed" ? "error" : "success",
+          );
         }
       } catch (error) {
         if (!cancelled) notify("Could not read command output: " + error.message, "error");
@@ -385,6 +392,20 @@ export default function App() {
       window.clearInterval(poller);
     };
   }, [currentTask && currentTask.id, currentTask && currentTask.status, refreshDashboard, notify]);
+
+  const stopCurrentTask = async () => {
+    if (!currentTask || !["running", "stopping"].includes(currentTask.status)) return;
+    try {
+      const task = await api("/api/tasks/" + encodeURIComponent(currentTask.id) + "/stop", {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      setCurrentTask(task);
+      notify((task.label || "Command") + " stopped.");
+    } catch (error) {
+      notify("Could not stop command: " + error.message, "error");
+    }
+  };
 
   const startTask = async (path, payload, label) => {
     try {
@@ -851,10 +872,22 @@ export default function App() {
                 <span className="grid size-8 place-items-center rounded-lg bg-slate-100 text-slate-600"><Activity size={16} /></span>
                 <div><h2 className="text-sm font-semibold text-slate-900">Command activity</h2><p className="text-xs text-slate-500">{currentTask.label || "Job-Agent task"} · {currentTask.id}</p></div>
               </div>
-              <Pill tone={currentTask.status === "succeeded" ? "green" : currentTask.status === "failed" ? "red" : "amber"}>{currentTask.status === "running" ? <><LoaderCircle size={12} className="animate-spin" /> Running</> : currentTask.status === "succeeded" ? "Completed" : "Failed"}</Pill>
+              <div className="flex items-center gap-2">
+                <Pill tone={currentTask.status === "succeeded" ? "green" : currentTask.status === "failed" ? "red" : currentTask.status === "stopped" ? "slate" : "amber"}>
+                  {currentTask.status === "running" || currentTask.status === "stopping"
+                    ? <><LoaderCircle size={12} className="animate-spin" /> {currentTask.status === "stopping" ? "Stopping" : "Running"}</>
+                    : currentTask.status === "succeeded" ? "Completed"
+                      : currentTask.status === "stopped" ? "Stopped" : "Failed"}
+                </Pill>
+                {["running", "stopping"].includes(currentTask.status) && (
+                  <Button size="small" variant="danger" onClick={stopCurrentTask} disabled={currentTask.status === "stopping"}>
+                    <X size={13} /> {currentTask.status === "stopping" ? "Stopping…" : "Stop command"}
+                  </Button>
+                )}
+              </div>
             </div>
             <pre className="max-h-72 min-h-20 overflow-auto whitespace-pre-wrap break-words bg-slate-950 px-4 py-4 text-xs leading-6 text-slate-100 sm:px-5">{currentTask.output || "Waiting for command output…"}</pre>
-            <p className="px-4 py-3 text-xs leading-5 text-slate-500 sm:px-5">If a task requests input, respond in the terminal running Job-Agent. Applications are never submitted automatically.</p>
+            <p className="px-4 py-3 text-xs leading-5 text-slate-500 sm:px-5">{currentTask.status === "stopped" ? "The command was interrupted. Review the output above before starting it again." : "If a task requests input, respond in the terminal running Job-Agent. Applications are never submitted automatically."}</p>
           </section>
         )}
 
