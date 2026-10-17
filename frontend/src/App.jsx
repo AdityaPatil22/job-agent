@@ -699,22 +699,31 @@ export default function App() {
           })}
         </section>
 
-        <section className="quick-add-panel mb-6 rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-          <div className="grid gap-4 lg:grid-cols-[minmax(230px,0.75fr)_minmax(0,1.8fr)] lg:items-center">
-            <div>
-              <div className="flex items-center gap-2"><span className="grid size-9 place-items-center rounded-lg bg-blue-50 text-blue-700"><Plus size={18} /></span><h2 className="font-semibold text-slate-900">Add a job</h2></div>
-              <p className="mt-2 text-sm leading-5 text-slate-500">Paste a job posting URL to create a tracker entry.</p>
-              <span aria-hidden="true">or </span><button type="button" className="mt-3 text-sm font-semibold text-blue-700 hover:text-blue-800" onClick={() => openEdit()}>Add Manually <span aria-hidden="true">→</span></button>
+        <section className="quick-add-panel mb-6 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm sm:p-6">
+          <div className="mb-5 flex items-start gap-3">
+            <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700"><Plus size={19} /></span>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold tracking-tight text-slate-900">Add a job</h2>
+              <p className="mt-1 text-sm leading-5 text-slate-500">Paste a job posting URL to add it to your application tracker.</p>
             </div>
-            <form onSubmit={onAddJob} className="min-w-0">
-              <label htmlFor="job-url" className="mb-1.5 block text-xs font-semibold text-slate-600">Job posting URL</label>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <input id="job-url" type="url" required value={jobUrl} onChange={(event) => setJobUrl(event.target.value)} placeholder="https://careers.company.com/jobs/123" className="min-h-11 min-w-0 flex-1 rounded-lg border border-slate-200 px-3.5 text-sm shadow-sm outline-none transition placeholder:text-slate-400 focus:border-blue-500 focus:ring-4 focus:ring-blue-50" />
-                <Button type="submit" variant="primary"><Plus size={16} /> Add from URL</Button>
-              </div>
-              <p className="mt-2 text-xs text-slate-400">Job-Agent parses the URL and stores the job in your local SQLite database.</p>
-            </form>
           </div>
+
+          <form onSubmit={onAddJob} className="min-w-0">
+            <label htmlFor="job-url" className="mb-2 block text-sm font-semibold text-slate-700">Job posting URL</label>
+            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-stretch">
+              <div className="relative min-w-0 flex-1">
+                <ExternalLink size={17} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input id="job-url" type="url" required value={jobUrl} onChange={(event) => setJobUrl(event.target.value)} placeholder="https://careers.company.com/jobs/123" className="min-h-12 w-full min-w-0 rounded-xl border border-slate-200 bg-slate-50/60 py-3 pl-10 pr-3.5 text-sm text-slate-800 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-300 hover:bg-white focus:border-blue-400 focus:bg-white focus:ring-4 focus:ring-blue-50" />
+              </div>
+              <Button type="submit" variant="primary" className="min-h-12 shrink-0 rounded-xl px-5"><Plus size={17} /> Add from URL</Button>
+            </div>
+            <div className="mt-3 flex flex-col gap-2 border-t border-slate-100 pt-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs leading-5 text-slate-400">Job-Agent parses the page and saves the entry to your local database.</p>
+              <button type="button" className="inline-flex min-h-9 w-fit items-center gap-1.5 rounded-lg px-2 text-sm font-semibold text-blue-700 transition hover:bg-blue-50 hover:text-blue-800 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-blue-100" onClick={() => openEdit()}>
+                Add manually <span aria-hidden="true">→</span>
+              </button>
+            </div>
+          </form>
         </section>
 
         <section className="gmail-panel mb-6 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
