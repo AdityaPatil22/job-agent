@@ -654,16 +654,15 @@ def _radio_group_key(element: Any, index: int) -> str:
     return f"radio:{element.get_attribute('id') or index}"
 
 
-def _radio_group_elements(element: Any, index: int) -> list[Any]:
+def _radio_group_elements(
+    element: Any,
+    index: int,
+    context: Page | Frame | None = None,
+) -> list[Any]:
+    """Find group siblings in the same document, including embedded frames."""
     del index
     name = element.get_attribute("name") or ""
-    if name and _element_type(element)[0] == "input":
-        radios = element.page.locator('input[type="radio"]')
-        return [
-            radios.nth(position)
-            for position in range(radios.count())
-            if (radios.nth(position).get_attribute("name") or "") == name
-        ]
+    search_context = context or element.page
     try:
         group = element.locator("xpath=ancestor::*[@role='radiogroup' or self::fieldset][1]")
         if group.count():
@@ -673,7 +672,9 @@ def _radio_group_elements(element: Any, index: int) -> list[Any]:
     except Exception:
         pass
     if name:
-        radios = element.page.locator('input[type="radio"]')
+        # Search in the caller's document/frame, not element.page: for a control
+        # inside an iframe element.page would otherwise query the top document.
+        radios = search_context.locator('input[type="radio"]')
         native = [
             radios.nth(position)
             for position in range(radios.count())
@@ -959,7 +960,7 @@ def _fill_standard_fields_in_context(
                 if group_key in seen_radio_groups:
                     continue
                 seen_radio_groups.add(group_key)
-                options = _radio_group_elements(element, index)
+                options = _radio_group_elements(element, index, page)
                 if _radio_group_selected(options):
                     report.skipped.append(f"{label} (already answered)")
                     continue
