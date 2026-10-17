@@ -43,8 +43,8 @@ def _validate_http_url(url: str, label: str = "URL") -> None:
 def validate_cdp_url(cdp_url: str) -> str:
     """Accept only a localhost CDP endpoint to avoid remote browser access."""
     parsed = urlparse(cdp_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError("CDP URL must be a complete http:// or https:// URL")
+    if parsed.scheme != "http" or not parsed.hostname:
+        raise ValueError("CDP URL must use http:// and a loopback host")
     if parsed.hostname.lower() not in {"127.0.0.1", "localhost", "::1"}:
         raise ValueError("For safety, Job-Agent only connects to a localhost CDP URL")
     if parsed.path not in {"", "/"} or parsed.query or parsed.fragment:
