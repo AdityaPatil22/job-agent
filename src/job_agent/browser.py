@@ -65,7 +65,7 @@ def is_cdp_available(cdp_url: str = DEFAULT_CDP_URL) -> bool:
 def ensure_chrome_ready(
     cdp_url: str = DEFAULT_CDP_URL,
     *,
-    start_url: str = "https://accounts.google.com/",
+    start_url: str = "about:blank",
     timeout_seconds: float = 20.0,
 ) -> bool:
     """Connect to local Job-Agent Chrome or launch its persistent profile.
@@ -74,7 +74,8 @@ def ensure_chrome_ready(
     already-running endpoint was reused. Never connects to a non-local host.
     """
     endpoint = validate_cdp_url(cdp_url)
-    _validate_http_url(start_url, "Start URL")
+    if start_url != "about:blank":
+        _validate_http_url(start_url, "Start URL")
     if is_cdp_available(endpoint):
         return False
 
@@ -140,7 +141,8 @@ def build_chrome_command(
     """Build a safe Chrome launch command using a dedicated Job-Agent profile."""
     if not isinstance(port, int) or not 1 <= port <= 65535:
         raise ValueError("Chrome debugging port must be between 1 and 65535")
-    _validate_http_url(url, "Start URL")
+    if url != "about:blank":
+        _validate_http_url(url, "Start URL")
     return [
         str(executable),
         "--remote-debugging-address=127.0.0.1",
